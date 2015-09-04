@@ -1,19 +1,7 @@
-#code i don't think i need
-#Cmatrix.diag = Cmatrix #store a copy before removing diag
-#diag(Cmatrix) = rep(0,47)
-#cited/citing
-#cited = rowSums(Cmatrix)
-#citing = colSums(Cmatrix)
-#cite.ratio = cited/citing
-#normalized
-#Cmatrix.norm = t(t(Cmatrix)/citing) #entries are percentage of j's (columnn's) citations to i (row)
-#Cnet.norm = as.network(Cmatrix.norm, directed=T, matrix.type="a", ignore.eval=F,  names.eval="citations")
-#------
+# Code from Carlen and Handcock's "Discussion on 'Statistical Modelling of Citation Exchange Between Statistics
+# Journals’ by Cristiano Varin, Manuela Cattelan and David Firth"
 
-
-#Code from Carlen and Handcock's "Discussion on 'Statistical Modelling of Citation Exchange Between Statistics
-#Journals’ by Cristiano Varin, Manuela Cattelan and David Firth"
-
+------------------------------------------------------------------------------
 
 # Pre-Processing -------
 
@@ -83,18 +71,19 @@ fit.table2 = fit.table[order(match(rownames(fit.table),Cnet%v%"vertex.names")),]
 
 # Network model 1: Sender-receiver model with citation counts ~ Poisson -------
 
-latent.srp1 = ergmm(Cnet~ sender(base=0) + receiver(base=0) - 1, response = "citations",
-                    family="Poisson.log", control = control.ergmm(pilot.runs=1), seed=111)
+latent.srp1 = ergmm(Cnet~ sender(base = 0) + receiver(base = 0) - 1, response = "citations",
+                    family = "Poisson.log", control = control.ergmm(pilot.runs = 1), seed = 123)
 
-# Correlation of output with Stigler (0.95)
+# Correlation of model  with Stigler (0.95)
 
 cor(latent.srp1$mcmc.mle$beta[48:94] - latent.srp1$mcmc.mle$beta[1:47], fit.table2$quasi)
 
-
 # Network model 2: Two-dimensional latent-space model  -------
+# (this model takes a while to run > 1hr)
 
-latent.srp2 = ergmm(Cnet~euclidean(d=2) + sender(base=0) + receiver(base=0) - 1, response = "citations", 
-                    family="Poisson.log", seed=123, control=ergmm.control(interval=200, sample.size=10000, burnin=100000)) 
+latent.srp2 = ergmm(Cnet~euclidean(d = 2) + sender(base = 0) + receiver(base = 0) - 1, response = "citations", 
+                    family = "Poisson.log", seed = 123, 
+                    control = ergmm.control(interval = 200, sample.size = 10000, burnin = 100000)) 
 
 # Correlation of output with Stigler (0.99)
 
@@ -102,10 +91,14 @@ cor(latent.srp2$mcmc.mle$beta[48:94] - latent.srp2$mcmc.mle$beta[1:47], fit.tabl
 
 # Network Plot 1 (Fig. 12a) -------
 
+vc2 = (latent.srp2$mcmc.mle$beta[48:94] - latent.srp2$mcmc.mle$beta[1:47])/2+1
+
 plot(latent.srp2, labels = T, cex=.7, label.cex=.5,
      plot.vars=F, vertex.col = cutree(journals.cluster, h = 0.6)+3, 
      edge.col=0, print.formula=F, main = NA, vertex.border = 0,
      vertex.cex = vc2, label.pos=3, suppress.axes=T,  xlab=NA, ylab=NA)
+
+#legend("topleft", col = 4:11, pch = 16, legend=c("review", "general", "theory/method", "appl./health", "computation","eco./envir.", "JSS", "StataJ"), cex=.8, box.col=0)
 
 # Network Plot 2 (Fig. 12b) -------
 
@@ -125,9 +118,49 @@ plot.ergmm(latent.srp2, xlab = NA, ylab = NA, vertex.col=0, edge.col=0,
 
 #add points
 s = sample(1:470000)
-for (i in 1:47000) {
+ndraws = 47000
+for (i in 1:ndraws) {
   points(m[s[i],1], m[s[i],2], col = m[s[i],3], pch=".")
 }
 
-legend("topleft", col = 4:11, pch = 16, legend=c("review", "general", "theory/method", "apply/health", "computational","eco/envir", "JSS", "StataJ"), cex=.8, box.col=0)
+legend("topleft", col = 4:11, pch = 16, legend=c("review", "general", "theory/method", "appl./health", "computation","eco./envir.", "JSS", "StataJ"), cex=.8, box.col=0)
 
+# Network Plot 1 Optimized for Grayscale (Fig. 12a) -------
+
+vc2 = (latent.srp2$mcmc.mle$beta[48:94] - latent.srp2$mcmc.mle$beta[1:47])/2+1
+
+group.bw = cutree(journals.cluster, h = 0.6)
+group.bw[group.bw==1]=22
+group.bw[group.bw==2]=1
+group.bw[group.bw==3]=21
+group.bw[group.bw==6]=12
+group.bw[group.bw==4]=23
+group.bw[group.bw==8]=10
+
+plot(latent.srp2$mkl$Z[, 1],latent.srp2$mkl$Z[, 2], 
+     pch = group.bw,
+     bg="grey",
+     #col = grey(cutree(journals.cluster, h = 0.6)/9),  
+     #col = cutree(journals.cluster, h = 0.6)+3
+     lwd = 1, cex = vc2 +.5,
+     xaxt = 'n', yaxt = 'n', xlab = NA, ylab = NA, bty = 'n'
+     )
+
+legend("topleft", pch = c(22,1,21,23,5,12,7,10), pt.bg ="grey",
+       legend=c("review", "general", "theory/method", "appl./health", "computation","eco./envir.", "JSS", "StataJ"),
+       cex=.8, box.col=0)
+
+adjust.x = rep(0,47); 
+  adjust.x[c(36, 46)] = .25;
+  adjust.x[c(22, 32)]=.2; 
+  adjust.x[c(15)]=.05; 
+  adjust.x[c(25, 30)] = -.12; adjust.x[c(17)] = -.25; 
+adjust.y = rep(0,47); 
+  adjust.y[c(8, 17, 23, 31, 44, 47)] = -.3; 
+  adjust.y[c(44)] = -.25;  
+  adjust.y[c(47)] = -.2;
+  adjust.y[c(36)] = -.1;
+  adjust.y[c(32)] = -.12; adjust.y[c(13, 30)]=-.045; 
+
+text(latent.srp2$mkl$Z[, 1]+adjust.x, latent.srp2$mkl$Z[, 2]+adjust.y, 
+      Cnet%v%"vertex.names", cex=.6, pos = 3, offset = .5)
