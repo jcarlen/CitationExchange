@@ -1,5 +1,5 @@
 ---
-title: "Comment on 'Statistical Modelling of Citation Exchange between Statistics Journals'"
+title: "Extended Comment on 'Statistical Modelling of Citation Exchange between Statistics Journals'"
 output: 
   pdf_document:
     fig_caption: yes
@@ -12,6 +12,7 @@ bibliography: citation_writeup.bib
 library(latentnet)
 library(ergm.count)
 #load matrix
+
 Cmatrix <- as.matrix(read.csv("~/Documents/citation/Citation_supplement/Data/cross-citation-matrix.csv", row.names = 1)) #47 x 47
 
 #Self-citations are removed: The highest raw counts are from self-citations of CSDA (486) and StMed (628), which would seem to skew any analysis of importance. The authors exclude self-citations for the Stigler method: "Both the eigenfactor and the article influence score are computed over a 5-year time period, with journal self-citations removed to eliminate possible sources of manipulation."
@@ -19,20 +20,21 @@ Cmatrix <- as.matrix(read.csv("~/Documents/citation/Citation_supplement/Data/cro
 Cmatrix.diag = Cmatrix #store a copy before removing diag
 diag(Cmatrix) = rep(0,47) #shouldn't actually matter, as.network zeros out diag
 
-#as valued net (#see Modeling valued networks with statnet paper)
-Cnet = as.network(Cmatrix, directed=T, matrix.type="a", ignore.eval=F,  
-       names.eval="citations")
+#Note the use of the tranposed Cmatrix in the next line to correspond to standard i,j entry = citation FROM i to j. Original Cmatrix has i,j indicates citation from j to i.
+
+Cnet = as.network(t(Cmatrix), directed=T, matrix.type="a", ignore.eval=F,  
+       names.eval="citations") #as valued net, see \cite{krivitsky2015}
 
 #as a binary network
-Cbinet <- as.network(Cmatrix)
+Cbinet <- as.network(t(Cmatrix))
 
 #cited/citing
-cited = rowSums(Cmatrix)
-citing = colSums(Cmatrix)
+cited = rowSums(Cmatrix) #citations in
+citing = colSums(Cmatrix) #citations out
 cite.ratio = cited/citing
 
 #normalized
-Cmatrix.norm = t(t(Cmatrix)/citing) #entries are % of j's (column's) citations to i (row)
+Cmatrix.norm = t(Cmatrix)/citing #entries are % of i's citations to j (column)
 Cnet.norm = as.network(Cmatrix.norm, directed=T, matrix.type="a", ignore.eval=F,
             names.eval="citations")
 ```
@@ -42,7 +44,7 @@ Cnet.norm = as.network(Cmatrix.norm, directed=T, matrix.type="a", ignore.eval=F,
 journal.abbr <- rownames(Cmatrix)
 
 Tmatrix <- Cmatrix + t(Cmatrix)
-diag(Tmatrix) <- diag(Cmatrix)
+diag(Tmatrix) <- diag(Cmatrix.diag)
 
 journals.cluster <- hclust(d = as.dist(1 - cor(Tmatrix)))
 #plot(journals.cluster, sub = "", xlab = "")
@@ -82,31 +84,66 @@ names(export.scores) <- journal.abbr
 sort.id <- sort(export.scores, decreasing = TRUE, index.return = TRUE)$ix
 fit.table <- data.frame(quasi = export.scores[sort.id], qse = qse$qvframe$quasiSE[sort.id])
 rownames(fit.table)
-rownames(fit.table)[c(1,6,20)] = c("JRSS.B", "JRSS.A", "JRSS.C")
+rownames(fit.table)[c(1,6,20)] = c("JRSS-B", "JRSS-A", "JRSS-C")
 match(rownames(fit.table),Cnet%v%"vertex.names")
 fit.table2 = fit.table[order(match(rownames(fit.table),Cnet%v%"vertex.names")),]
 
 ```
 
-In the comment to "Discussion on 'Statistical Modelling of Citation Exchange Between Statistics Journals’ by Cristiano Varin, Manuela Cattelan and David Firth", we briefly consider a networks analysis of the citation data discussed in the article. This includes network plots which show the layout of statistics journals under a latent space model and our undertainty regarding those positions.
+In the *Discussion on 'Statistical Modelling of Citation Exchange Between Statistics Journals' by Cristiano Varin, Manuela Cattelan and David Firth*, we briefly consider a networks analysis of the statististics journal citation data discussed in the article.
 
-Below I provide a more informal discussion, expanding on the network models, considering other approaches, and describing implementation in R.
+The following is an extended discussion, expanding on the network models and adding visualizations and details of implementation in R.
 
 ### 2) Visualization:
 
-Julyan Arbel writes in a blog post (https://statisfaction.wordpress.com/2015/04/16/statistics-journals-network/) that he is surprised no "networks representation" of the citation data presented in the article by Varin et al.
+Julyan Arbel writes in a blog post that he is surprised to see no "networks representation" of the citation data presented in the article by @varinetal [@arbel]. Plotting the network of journals offers a succinct summary of relationships, clustering and centrality. Of course, our interpretation of such a plot is sensitive to the plotting algorithm, parameters, and any underlying model.
 
-Plotting the network of journals offers a succinct summary of relationships, clustering and centrality. Of course, our interpretation of such a plot is sensitive to the plotting algorithm, parameters, and any underlying model. 
+The first figure in Arbel's post is a network plot prepared using the Gephi software (http://gephi.github.io/). It shows the traffic between journals via the edge weights, although for visual clarity only the top decile of weightiest edges is included. However, the distances between journals are not meaningful and are instead (I believe) optimized for appearance.
 
-Arbel provides one example in his first figure (https://statisfaction.wordpress.com/2015/04/16/statistics-journals-network/). One aspect of his plot that ours in the comment omit is the traffic between journals, shown in the edge weights. (Although for visual clarity only the top decile of weightiest edges is included.) However, unlike in our plots (e.g., see Figure ?) I am under the impression that the distances between journals in his plot are not meaningful. I believe that they are instead optimized for appearance.
+Similarly, Figure 1 below presents a thinned down version of the citation network. An edge ($i \to j$) is only visible if $j$ receives at least seven percent of the citations given by $i$. It shows that several journals are "parents" of some beneath them, but many journals are on the same level. It is evident why *Journal of the Royal Statistical Society, Series B* (JRSS-B), *Annals of Statistics* (AoS), *Biometrika* (Bka) and *Journal of the American Statistical Association* (JASA) are consistently the top four ranked journals, affirming "diffuse opinion within the statistical community" [@varinetal].
 
-I provide another example of a plot showing traffic between journals below (see Figure ?). More examples of network visualizations and corresponding code (and model, where applicable) are embedded in the discussion below.
+```{r network_thin, dependson = "setup", eval=T, cache=T, fig.keep='first', results = 'hide', echo=F, fig.cap = "Statistics journal citation network. Edges only pictured if receiver accounts for at least seven percent of sender's total citations sent. Vertex sizes are scaled to export scores under the Stigler model.", fig.height=6}
+
+#from "setup":
+# Cmatrix.norm = t(Cmatrix)/citing #entries are % of i's citations to j (column); rows sum to 1; 'citing' is total out for each journal
+
+strength = .07 #only include "strong receivers", i.e. receiver accounts for >.07 = 7% of sender's citations sent [different form the plot in `compare_clustered`]
+#interesting plot with strength = .1 (100 edges remain)  
+
+Cstrong = t(Cmatrix)
+Cstrong[Cmatrix.norm<strength] = 0
+#rowSums(Cstrong>0)
+Cnet.strong = as.network(Cstrong, directed=T, matrix.type="a", ignore.eval=F,  
+       names.eval="citations")
+
+par(mai = rep(.3,4))
+plot.network(Cnet.strong, label=Cnet.strong%v%"vertex.names",
+             edge.col = "light gray",
+             #edge.col = gray(1 - Cnet.strong%e%"citations" / max(Cnet.strong%e%"citations")),
+             label.col = 1, label.cex=.6, vertex.cex=(fit.table2$quasi+2)/3,
+             vertex.border=F, arrowhead.cex=1.5) 
+
+#### end ####
+```
+
+Figures ? and ? below provide examples of citation network plots in which distances between journals are model-based. The discussion describes the underlying models and corresponding code.
 
 ### 3) Network Modelling:
 
-The Stigler model estimates "export scores", $u_i$, such that $c_{ij}$ is assumed binomially distributed with $E(c_{ij}) = t_{ij}\exp{(\alpha_i+\beta_j)} \text{ and } u_i = \alpha_i - \beta_i$, as in 'quasi-symmetry' formulation (4). (Notation: Data on citations between $n$ journals are represented in the cross-citation matrix $C$, where $c_{ij}$ is the number of times journal $i$ is cited by journal $j$ excluding self-citations. $T$ is the symmetric total citation matrix, i.e. $t_{ij} = c_{ij} +c_{ji} \text{ for } i \neq j \text{ and} 0$ otherwise.))
+The Stigler model estimates "export scores", $u_i$, such that $c_{ij}$ is assumed binomially distributed with $E(c_{ij}) = t_{ij}\exp{(\alpha_i+\beta_j)} \text{ and } u_i = \alpha_i - \beta_i$, as in 'quasi-symmetry' formulation (4). Note that in Varin et al. the data is stored in an $47\text{ x }47$ cross-citation matrix $C$, in which $c_{ij}$ is the number of times journal $i$ is cited *by* journal $j$ excluding self-citations. $T$ is the symmetric total citation matrix, i.e. $t_{ij} = c_{ij} +c_{ji} \text{ for } i \neq j \text{ and } 0$ otherwise. To faciliate modeling in this paper I have transposed the data to fit a standard network framework such that $c_{ij}$ is the number of times journal $i$ cites journal $j$. This change is reflected in the notation below. In this notation, the 'quasi-symmetry' formulation (4) is expressed $E(c_{ij}) = t_{ij}\exp{(\alpha_j+\beta_i)} \text{ and } u_i = \alpha_i - \beta_i$.
 
-We can place these assumptions in the context of an exponential random graph model (ERGM) on a valued network, where edge weights are directed citation counts. A direct extension of the Stigler model would retain the assumption of binomially distributed citations. However, for ease of modelling we assume edgwise Poisson distributions with mean $c_{ij}$, i.e. modelling a count instead of a proportion. (I was not able to set unique binomial trials for each $ij$, though I am not sure why. Looking at the `ergmm` helper functions it seems like it should be possible. See details in the "binomial_error" code chunk in the markdown version of this document.)
+We can place these assumptions in the context of an exponential random graph model (ERGM) on a valued network, where edge weights are directed citation counts. A direct extension of the Stigler model would retain the assumption of binomially distributed citations. However, for ease of modelling we assume Poisson-distributed citatons with mean $c_{ij}$, thereby modelling a count instead of a proportion. We include `sender` ($\beta_i$) and `receiver` ($\alpha_i$) effects, so that our assumption is $c_{ij} \sim pois(\lambda_{ij} = exp(\beta_i + \alpha_j))$. <!--note change from varin et al notation.--> The model formula is below.
+
+<!--latent.srp0 is the natural model, but for equivalence to the Stigler model I used the no intercept model, latent.srp1, below.-->
+
+```{r latent_sr0, eval = T, results = 'hide', echo = F, dependson="setup", cache=T, warning=F}
+#intercept model
+latent.srp0 = ergmm(Cnet~ sender(base=0) + receiver(base=0), #base=0 OK because no edge term
+  response = "citations", family="Poisson.log",
+  control = control.ergmm(pilot.runs=1), seed = 123)
+```
+
+Computational note: We can easily implement this (Poisson) network model using the `latentnet` package in R [@latentnet]. The Poisson model is used because in  `latentnet` I was unable to set unique binomial trials for each $ij$, although the `ergmm` helper functions seems to indicate that it is possible. (See details in the `binomial_error` code chunk in the markdown version of this document.) It may seem natural to use the `ergm.count` [@ergmcount] package for weighted networks instead, but that package seems not to have `sender` and `receiver` terms implemented. In addition, using the `latentnet` package sets up later analysis.
 
 ```{r binomial_error, eval=F, results='hide', echo=F}
 
@@ -119,55 +156,46 @@ test = ergmm(Cnet ~ sender(base=0) + receiver(base=0), response = "citations", f
 # I think eta is an n x n matrix
 ```
 
-We can easily implement this (Poisson) network model using the `latentnet` package in R \cite{latentnet}. (It may seem natural to use the `ergm.count` (\cite{ergmcount}) package for weighted networks instead, but that package seems not to have `sender` and `receiver` terms implemented. In addition, using the `latentnet` package sets up later analysis.)
-
-We include `sender` ($\beta_j$) and `receiver` ($\alpha_i$) effects, so that our assumption is $c_{ij} \sim pois(\lambda_{ij} = exp(\alpha_i + \beta_j))$.
-
-<!--latent.srp0 is the natural model, but for equivalence to the Stigler model I used the no intercept model, latent.srp1, below-->
-
-```{r latent_sr0, eval = T, results = 'hide', echo = F, dependson="setup", cache=T, warning=F}
-#intercept model
-latent.srp0 = ergmm(Cnet~ sender(base=0) + receiver(base=0), 
-  response = "citations", family="Poisson.log",
-  control = control.ergmm(pilot.runs=1), seed = 123)
-```
-
 ```{r latent_sr1, eval = T, results = 'hide', echo = c(2,3), dependson="setup", cache=T, warning=F}
 #no intercept model
-latent.srp1 = ergmm(Cnet~ sender(base=0) + receiver(base=0) - 1, response = "citations",
+latent.srp1 = ergmm(Cnet ~ sender(base=0) + receiver(base=0) - 1, response = "citations",
   family="Poisson.log", control = control.ergmm(pilot.runs=1), seed = 123)
 ```
 
-The Stigler export scores reported in Table 5 of \cite{varinetal} are highly correlated (.95) with the corresponding estimates from this model ($\alpha_i - \beta_i$). The plot below compares rankings by the two methods, showing their similarity. I belive the difference is mostly due to the switch from binomial to poisson expectations.
+The Stigler export scores reported in Table 5 of Varin et al. are highly correlated ($.95$) with the corresponding estimates from this model ($\alpha_i - \beta_i$). The plot below compares rankings by the two methods, showing their similarity. Differences may be due in most part to the switch from binomial to Poisson expectations. (Code for a plot comparing scores instead of ranks is in the `latent_sr_analysis` code chunk in the markdown version of this document.)
 
-```{r latent_sr_analysis, eval = T, results = 'markup', echo = 2, dependson= c("setup", "latent_sr01"), cache=T, fig.keep='last'}
+```{r latent_sr01_analysis, eval = T, results = 'hide', echo = F, dependson= c("setup", "latent_sr0", "latent_sr1"), cache=T, fig.keep='last', fig.cap= 'Comparison of rankings by the Stigler and sender-receiver (latent.srp1) model. There is more differentiation towards the middle due to scores being more tightly clustered.'}
 
-#correlation / plot
-cor(latent.srp0$mcmc.mle$beta[49:95] - latent.srp0$mcmc.mle$beta[2:48],fit.table2$quasi)
-cor(latent.srp1$mcmc.mle$beta[48:94] - latent.srp1$mcmc.mle$beta[1:47], fit.table2$quasi)
-plot(latent.srp1$mcmc.mle$beta[48:94] - latent.srp1$mcmc.mle$beta[1:47],fit.table2$quasi, xlab = "Sender-Receiver Model", ylab = "Stigler Model")
+#correlation / plot (note use of mkl estimates)
+cor(latent.srp0$mkl$beta[49:95] - latent.srp0$mkl$beta[2:48],fit.table2$quasi)
+#reciever - sender
+cor(latent.srp1$mkl$beta[48:94] - latent.srp1$mkl$beta[1:47], fit.table2$quasi)
+
+
+##### how do the estimated scores compare to Stigler? ####
+plot(fit.table2$quasi, latent.srp1$mkl$beta[48:94] - latent.srp1$mkl$beta[1:47], xlab = "Stigler", ylab = "Sender-Receiver Model") #type = 'n'
+#text(labels = Cnet%v%"vertex.names", fit.table2$quasi, latent.srp1$mkl$beta[48:94] - latent.srp1$mkl$beta[1:47], cex = .6)
+
 
 ##### how do the estimated ranks compare to Stigler? ####
-sl.raw = round(cbind(fit.table2$quasi, latent.srp1$mcmc.mle$beta[48:94] - latent.srp1$mcmc.mle$beta[1:47]),3)
-plot(sl.raw[,1],sl.raw[,2], xlab = "Stigler", ylab = "Latent", main = "Raw Score")
+sl.raw = round(cbind(fit.table2$quasi,  latent.srp1$mkl$beta[48:94] - latent.srp1$mkl$beta[1:47]),3)
+plot(sl.raw[,1],sl.raw[,2], xlab = "Stigler", ylab = "Sender-Receiver", main = "Raw Score")
 sl = matrix(as.numeric(as.character(sl.raw)),47,2)
-sl = sl[1:46,] #47 NA
 sl = sl[order(sl[,1]),]
-sl = sl[46:1,]
-sl[,1] = 1:46
+sl[,1] = 1:47
 sl = sl[order(sl[,2]),]
-sl[,2] = 46:1
-sl = sl[46:1,]
+sl[,2] = 1:47
 sl.rank = cbind(sl,sl[,2]-sl[,1])
-plot(sl.rank[,1],sl.rank[,2], xlab = "Stigler", ylab = "Latent", main = "Rank")
-
+plot(sl.rank[,1],sl.rank[,2], xlab = "Stigler", ylab = "Sender-Reciever (latent.srp1)", main = "Rank Comparison", type = "n")
+text(labels = Cnet%v%"vertex.names", sl.rank[,1],sl.rank[,2], cex = .6)
+abline(a = 0, b = 1, col ="red")
 #### end ####
 
 ```
 
 ### 4) Equivalence to GLM:
 
-It is interesting to note that the estimates of export scores in Table 5 of \cite{varinetal} are, up to scaling, identical to estimates from a binomial glm with logit link on proportional citation counts. (The response is a vector of $\frac{c_{ij}}{t_{ij}}$ with zeros for diagonal elements. The zero-sum constraint on the export scores described in Section 5.1 is not implemented so one score is NA. For details, see "glm" code chunk in the markdown version of this document.)
+It is interesting to note that the estimates of export scores in Table 5 of Varin et al. are, up to scaling, identical to estimates from a binomial glm with logit link on proportional citation counts. The response is a vector of $\{\frac{c_{ij}}{t_{ij}}\}$ with zeros for diagonal elements. The zero-sum constraint on the export scores described in Section 5.1 of Varin et al. is not implemented so one score is NA. (For details, see the `glm` code chunk in the markdown version of this document.)
 
 ```{r glm, eval = T, cache = T, echo = F, results = 'hide', dependson= c("setup", "setup_jrss", "latent_sr1"), fig.keep='none', warning=F}
 
@@ -177,17 +205,18 @@ Tmatrix <- Cmatrix + t(Cmatrix)
 
 #build design matrix
 n = 47
-x1 = matrix(0,n^2,n); for (i in 1:n) { #sender
+x1 = matrix(0,n^2,n)
+for (i in 1:n) { #sender
   for (j in 1:n) { 
     if (i != j) {
-      x1[n*(i-1)+j,i]=-1;
-      x1[n*(i-1)+j,j]=1;
+      x1[n*(i-1)+j,i]=1;
+      x1[n*(i-1)+j,j]=-1;
     }
   }
 }
 
 #response
-y = as.vector(Cmatrix)/as.vector(Tmatrix)
+y = as.vector(t(Cmatrix))/as.vector(Tmatrix)
 y[is.nan(y)]=0
 
 #model
@@ -196,7 +225,7 @@ g1 = glm(y~x1-1,family = binomial(link="logit"), weights = as.vector(Tmatrix))
 #results
 #identical to Stigler up to scaling and loss of 1 DOF:
 cor(fit.table2$quasi, g1$coefficients, use="pairwise.complete.obs") 
-plot(fit.table2$quasi, g1$coefficients)
+plot(fit.table2$quasi, g1$coefficients, ylab = "glm", xlab = "Stigler")
 
 #variance? 
 #Standard errors of the coefficient estimates from the GLM g1 are almost perfectly correlated with the quasi-standard errors of the Stigler model presented in Section 5.3 of the paper. 
@@ -205,7 +234,7 @@ cor(g1se, fit.table2$qse[1:46]) #.99
 
 #### 1a. Binomial GLM sender + receiver ####
 
-#Setting it up with "sender"" and "receiver" effects in the design matrix gives basically the same results but it's superfluous, as the "sender" and "receiver" coefficents are perfectly correlated.
+#Setting it up with "sender"" and "receiver" effects in the design matrix gives basically the same results but it's superfluous, as the "sender" and "receiver" coefficents are perfectly negatively correlated (we're really fitting the differences).
 
 #build design matrix:
 x1a = matrix(0,n^2,2*n)
@@ -221,9 +250,9 @@ for (i in 1:n) { #sender
 g1a = glm(y~x1a-1,family = binomial(link="logit"), weights = as.vector(Tmatrix))
 
 #identical to Stigler up to scaling and loss of 1 DOF (last value NA) :
-cor(fit.table2$quasi, g1a$coefficients[48:94]-g1a$coefficients[1:47], use="pairwise.complete.obs") #=1
+cor(fit.table2$quasi, g1a$coefficients[1:47]-g1a$coefficients[48:94], use="pairwise.complete.obs") #=1
 
-#"sender" and "receiver" coefficents perfectly correlated.
+#"receiver" and "sender" coefficents perfectly negatively correlated.
 cor(g1a$coefficients[1:47], g1a$coefficients[48:94], use = "complete.obs")
 
 #variance correlates almost perfectly to QSE
@@ -250,11 +279,11 @@ plot(fit.table2$quasi, g2$coefficients[48:94] - g2$coefficients[1:47])
 
 A benefit of the network model described above is extensibility, both theoretically and computationally.
 
-We can make minor adjustments to the `latent.srp1` model above, such as including an intercept term for dyad-wise distributions (i.e., $\lambda_{ij} = \theta + \alpha_i + \beta_j$). We can also make more significant changes, such as locating journals in latent space and adding cluster labels. These models and corresponding visualizations provide a deeper understanding of the landscape of journals.
+We can make minor adjustments to the `latent.srp1` model above, such as including an intercept term for dyad-wise distributions, i.e., $\lambda_{ij} = \exp(\theta + \beta_i + \alpha_j)$. We can also make more significant changes, such as locating journals in latent space and adding cluster labels. These models and corresponding visualizations provide a deeper understanding of the landscape of journals.
 
 ### 5.1) Latent Space Model:
 
-As a preliminary extension, consider the example of a two-dimensional latent space model using the `latentnet` package (\cite{latentnet}). This model posits distances between journals as latent variables that affect edge formation (citation counts).  (See formulation in Equation 4 of \cite{latentrandom2009}. For background see \cite{hoff2002}; \cite{latentnet_jss}; \cite{latentnet}.)
+As a preliminary extension, consider the example of a two-dimensional latent space model using the `latentnet` package [@latentnet]. This model posits distances between journals as latent variables that affect edge weights (i.e., citation counts). Below, `latent.srp2` adds to `latent.srp1` that journals reside in two-dimensional euclidean space, i.e., $\lambda_{i,j} = \exp(\|Z_i - Z_j\| +\beta_i+\alpha_j)$ . (See formulation in Equation 4 of @krivitskyetal2009. For background see @hoff2002; @latentnet_jss; @latentnet.)
 
 ```{r latent_sr2, eval = T, results = 'hide', echo = c(1:3), cache=T, dependson="setup", warning=F}
 
@@ -267,53 +296,83 @@ latent.srp2 = ergmm(Cnet~euclidean(d=2) + sender(base=0) + receiver(base=0) - 1,
 # response = "citations", family="Poisson.log", seed=123, 
 #      control=ergmm.control(interval=200, sample.size=10000, burnin=100000)) 
 
-# position only model. Much higher BIC - see compare12S code chunk 
+# position only model. Worse fit, much higher BIC - see compare12S code chunk 
 # latent.srp2b = ergmm(Cnet~euclidean(d=2), response = "citations", family="Poisson.log",
 # seed=123, control=ergmm.control(interval=200, sample.size=10000, burnin=100000)) 
 ```
 
 <!-- 3-D position estimates:-->
-```{r latent_sr3, eval = F, results = 'hide', echo = c(1:3), cache=T, dependson="setup", warning=F}
+```{r latent_sr3, eval = T, results = 'hide', echo = F, cache=T, dependson="setup", warning=F}
 
 latent.srp3 = ergmm(Cnet~euclidean(d=3) + sender(base=0) + receiver(base=0) - 1,
       response = "citations", family="Poisson.log", seed=123,
       control=ergmm.control(pilot.runs = 4, interval=200, sample.size=10000, burnin=100000)) 
 ```
- 
-Estimates of export scores from the Stigler model are very highly correlated (.99) with corresponding estimates from this model (receiver minus sender coefficient). When we plot the output (Figure ?), the relative distances between journals are meaningful. (In comparison, see the naive plot of the network in the "basicplot" code chunk of this markdown document.) <!--can I still do test of significant difference for this model?-->
 
-```{r basicplot, eval = F, echo = F, dependson= c("setup", "setup_jrss"), warning=F, echo = F, message=F}
-plot(Cnet, edge.col="light grey", label = Cnet%v%"vertex.names", vertex.cex = (cite.ratio+1)/2, label.cex=.7, vertex.col = cutree(journals.cluster, k = 6) )
+```{r latent_sr23_analysis, eval = TRUE, results = 'hide', echo = FALSE, warning = FALSE, message = FALSE, dependson= c("setup", "setup_jrss", "latent_sr2", "latent_sr3"), cache=TRUE, fig.keep='last', fig.cap= 'Comparison of rankings by the Stigler and two-dimensional latent space (latent.srp2) model.'}
+
+#correlation / plot (note use of mkl estimates)
+cor(latent.srp2$mkl$beta[48:94] - latent.srp2$mkl$beta[1:47], fit.table2$quasi)
+#reciever - sender
+cor(latent.srp3$mkl$beta[48:94] - latent.srp3$mkl$beta[1:47], fit.table2$quasi)
+
+##### how do the estimated scores compare to Stigler? ####
+
+#2D
+plot(fit.table2$quasi, latent.srp2$mkl$beta[48:94] - latent.srp2$mkl$beta[1:47], xlab = "Stigler", ylab = "2-D latent space") #type = 'n'
+#text(labels = Cnet%v%"vertex.names", fit.table2$quasi, latent.srp2$mkl$beta[48:94] - latent.srp2$mkl$beta[1:47], cex = .6)
+
+#3D
+plot(fit.table2$quasi, latent.srp3$mkl$beta[48:94] - latent.srp3$mkl$beta[1:47], xlab = "Stigler", ylab = "3-D latent space") #type = 'n'
+#text(labels = Cnet%v%"vertex.names", fit.table2$quasi, latent.srp3$mkl$beta[48:94] - latent.srp3$mkl$beta[1:47], cex = .6)
+
+##### how do the estimated ranks compare to Stigler? ####
+
+model2 =  latent.srp2
+
+sl.raw = round(cbind(fit.table2$quasi,  model2$mkl$beta[48:94] - model2$mkl$beta[1:47]),3)
+plot(sl.raw[,1],sl.raw[,2], xlab = "Stigler", ylab = "2-D latent space", main = "Raw Score")
+sl = matrix(as.numeric(as.character(sl.raw)),47,2)
+sl = sl[order(sl[,1]),]
+sl[,1] = 1:47
+sl = sl[order(sl[,2]),]
+sl[,2] = 1:47
+sl.rank = cbind(sl,sl[,2]-sl[,1])
+plot(sl.rank[,1],sl.rank[,2], xlab = "Stigler", ylab = "2-D Latent space", main = "Rank Comparison", type = "n")
+text(labels = Cnet%v%"vertex.names", sl.rank[,1],sl.rank[,2], cex = .6)
+abline(a = 0, b = 1, col ="red")
+
+#### end ####
 ```
 
-Below (Figure 1, left) we plot estimated journal positions <!--mkl--> from `latent.srp2`. Node sizes are scaled to receiver minus sender coefficient. The coloring corresponds to the clustering model of the authors (see their Section 3), as do the cluster labels on the right. Although there is no clustering term in our latent space model, the clustering is fairly well captured. The plot shows how the clusters fit together, and which journals are neighbors. However, we should be careful not to put too much stock in the exact positions. The right-hand plot displays the uncertainty in the positions using a sample of draws from the model. 
+Estimates of export scores from the Stigler model are very highly correlated (.99) with the corresponding estimates from this model (receiver minus sender coefficient). The rankings differ only slightly, as shown in Figure ?. (Code for a three-dimensional latent space model is in the `latent_sr3` code chunk and plotted against the Stigler model in the `latent_sr23_analysis` chunk. The correlation is greater than $.99$) 
 
-```{r latent_sr2_plot, eval = T, results = 'hide', dependson= c("setup", "latent_sr2", "setup_jrss", "networkstructure_thin", "latent_sr1"), fig.keep='last', echo = F, fig.height=6, fig.width=6, cache = T, warning=F, message=F, fig.cap= 'Estimated journal positions from the two-dimensional latent space model. Left: Point estimates with node size scaled to receiver minus sender coefficient. Right: Sample of positions from the model. Colouring is due to the hierarchical clustering of the authors (Section 3). '}
+Below (Figure ?, left) is a plot of estimated journal positions <!--mkl--> from `latent.srp2`. Node sizes are scaled to receiver minus sender coefficient. The coloring corresponds to the clustering model of Varin et al. (see their Section 3), as do the cluster labels on the right. Although there is no clustering term in our latent space model, the clustering of the authors is fairly well captured. The plot shows how the clusters fit together, and which journals are neighbors. However, we should be careful not to put too much stock in the exact positions. The right-hand plot displays the uncertainty in the positions using a sample of draws from the model. 
+
+```{r latent_sr2_plot, eval = T, results = 'markup', dependson= c("setup", "latent_sr2", "setup_jrss", "networkstructure_thin", "latent_sr1"), fig.keep='last', echo = F, fig.height=6, fig.width=6, cache = T, warning=F, message=F, fig.cap= 'Estimated journal positions from the two-dimensional latent space model. Left: Point estimates with node size scaled to receiver minus sender coefficient. Right: Sample of positions from the model. Colouring is due to the hierarchical clustering of Varin et al. '}
 
 ####  plot ####
 
 par(mai = c(.1,.1,.1,.1))
 layout(matrix(c(1,1,1,2,2,1,1,1,2,2,1,1,1,2,2), 3, 5, byrow = TRUE), respect = T)
-#vc = (latent.srp1$mcmc.mle$beta[48:94] - latent.srp1$mcmc.mle$beta[1:47])/2+1
-vc2 = (latent.srp2$mcmc.mle$beta[48:94] - latent.srp2$mcmc.mle$beta[1:47])/2+1
+#vc = (latent.srp1$mkl$beta[48:94] - latent.srp1$mkl$beta[1:47])/2+1
+vc2 = (latent.srp2$mkl$beta[48:94] - latent.srp2$mkl$beta[1:47])/2+1
 
-Tmatrix <- Cmatrix.diag  + t(Cmatrix.diag )
-diag(Tmatrix) <- diag(Cmatrix.diag)
-journals.cluster <- hclust(d = as.dist(1 - cor(Tmatrix)))
-
-plot(latent.srp2, labels = T, cex=.7, label.cex=.5,
-     plot.vars=F, vertex.col = cutree(journals.cluster, h = 0.6)+3, 
-     edge.col=0, print.formula=F, main = NA, vertex.border = 0,
+plot(latent.srp2, labels = T, cex=.7, label.cex=.5, what = "mkl",
+     plot.vars=F, vertex.col = cutree(journals.cluster, h = 0.6)+3, edge.col=0,
+     print.formula=F, main = NA, vertex.border = "black", vertex.lwd = .3,
      vertex.cex = vc2, label.pos=3, suppress.axes=T,  xlab=NA, ylab=NA)
      # view some edges, for visibility edge only ifcorresponding citation count is > 20:
      # edge.col = as.numeric(Cnet%e%"citations">20)*8, 
 
 ####  cloud/uncertainty plot  ####
- 
+
+n = 47
+N = 1000 
 p = latent.srp2[["sample"]][["Z"]]
 m = matrix(0,0,3)
-for (i in 1:47) {
-  p1 = cbind(p[,i,][,1],p[,i,][,2], rep((cutree(journals.cluster, h = 0.6)+3)[i],10000))
+for (i in 1:n) {
+  p1 = cbind(p[,i,][,1],p[,i,][,2], rep((cutree(journals.cluster, h = 0.6)+3)[i], N))
   m = rbind(m,p1)
 }
 
@@ -323,8 +382,8 @@ plot.ergmm(latent.srp2, xlab = NA, ylab = NA, vertex.col=0, edge.col=0,
            xlim = c(-4,4), ylim = c(-3,5), main = NA, pie=F)
 
 #add points
-s = sample(1:470000)
-for (i in 1:47000) {
+s = sample(1:(n * N * 10))
+for (i in 1:(n * N)) {
   points(m[s[i],1], m[s[i],2], col = m[s[i],3], pch=".")
 }
 
@@ -333,155 +392,45 @@ legend("topleft", col = 4:11, pch = 16, legend=c("review", "general", "theory/me
 #### end ####
 ```
 
-```{r latent_sr2_plot_bw, eval = T, results = 'hide', dependson= c("setup", "latent_sr2", "setup_jrss", "networkstructure_thin", "latent_sr1", "latent_sr2_plot"), fig.keep='last', echo = F, fig.height=6, fig.width=6, cache = T, warning=F, message=F, fig.cap= 'Estimated journal positions from the two-dimensional latent space model. Left: Point estimates with node size scaled to receiver minus sender coefficient. Right: Sample of positions from the model. Shadine is due to the hierarchical clustering of the authors (Section 3). '}
+Figure ? gives a visual aid to the observation (see Section 7.2 of Varin et al.) that many journals are not significantly different in rank, and therefore 'grouped' rankings are more appropriate than traditional ordering. We see a periphery of mostly low-ranked journals on the right and a small cluster of leading journals around JRSS-B. Roughly, journals decrease in rank from left to right, but middle-ranked journals are dispersed widely from top to bottom. Centrality does not equate to rank or prestige, as we can see with *Biometrics (BSC)* and *Bernoulli (Bern)* on the edge of the plot.
 
-###########    plot
+Further, the two-dimensional latent space model (`latent.srp2`) accounts better for topical connections between journals than the sender-receiver only model (`latent.srp1`). The residuals of `latent.srp2` have range $(-26, 27)$ with standard deviation $3.7$, while  those of `latent.srp1` have range $(-128, 79)$ with standard deviation $8.7$. The largest residual of `latent.srp1` corresponds to citations from Biometrics (Bcs) to Statistics in Medicine (StMed). There is a clear topical connection between those journals that is not captured by their general tendency to import/export citations. In the `latent.srp2` model they are positioned near eachother and that residual drops to 3.
 
-#### pre ####
+```{r prediction12, eval = T, echo = F, cache = T, dependson= c("setup", "setup_jrss", "latent_sr1", "latent_sr2"), warning=F, echo = F, message=F, fig.width = 5, results = 'hide', fig.keep='none', fig.cap= "Distribution of residuals without (left) and with (right) the latent space component added to the sender-receiver model. "}
 
-par(mai = c(.1,.1,.1,.1))
-layout(matrix(c(1,1,2,2,1,1,2,2,1,1,2,2), 3, 4, byrow = TRUE), respect = T)
+z1 = predict.ergmm(latent.srp1); diag(z1) = rep(0,47); z1 = as.vector(z1)
+z2 = predict.ergmm(latent.srp2); diag(z2) = rep(0,47); z2 = as.vector(z2)
+y = as.vector(t(Cmatrix))
+summary(y - z1); summary(y - z2)
+sd(y - z1); sd(y - z2)
+        
+#largest residual
+which.max(abs(as.vector(y - z1))) #320 -> 7, 38
+max(abs(as.vector(y - z1)))
+(y-z1)[320]; (y-z2)[320]
 
-#vc = (latent.srp1$mcmc.mle$beta[48:94] - latent.srp1$mcmc.mle$beta[1:47])/2+1
-vc2 = (latent.srp2$mcmc.mle$beta[48:94] - latent.srp2$mcmc.mle$beta[1:47])/2+1
 
-Tmatrix <- Cmatrix.diag  + t(Cmatrix.diag )
-diag(Tmatrix) <- diag(Cmatrix.diag)
-journals.cluster <- hclust(d = as.dist(1 - cor(Tmatrix)))
+#### plots ####
 
-#### optimize group pch ####
-group.bw = cutree(journals.cluster, h = 0.6)
-group.bw[group.bw==1]=22
-group.bw[group.bw==2]=1
-group.bw[group.bw==3]=21
-group.bw[group.bw==6]=12
-group.bw[group.bw==4]=23
-group.bw[group.bw==8]=10
-group.bw[group.bw==5]=25
+#plot(1:2209, as.vector(t(Cmatrix)) - z1, pch = "*", main = "Residual Comparison", ylab = "Residual", xlab = "dyad") #outliers can indicate strong topical connections, where counts deviate from general pattern (e.g. highest value in the plot represents Statistics in Medicine (StMed) to Biometrics (Bcs) to StMed, Cmatrix[7,38])
 
-#4 -> 23 appl/health
-#8 -> 10 StataJ
-#6 -> 12 eco/envir
-#7 JSS
-#5 -> 25 Computation
-#1 -> 22 review
-#2 -> 1 general
-#3 -> 21 theory
+#points(1:2209, as.vector(t(Cmatrix)) - z2, col = "red", pch = "*") 
 
-#### plot ####
+#legend ("topleft", legend = c("latent.srp1 (positions not estimated)", "latent.srp2 (2-D latent space)"), pch = "*", pt.cex = 1.5, col = c(1,2), cex = .8)
 
-plot(latent.srp2$mkl$Z[, 1],latent.srp2$mkl$Z[, 2], 
-     pch = group.bw,
-     bg="grey",
-     #col = grey(cutree(journals.cluster, h = 0.6)/9),  
-     #col = cutree(journals.cluster, h = 0.6)+3
-     lwd = 1, cex = vc2+.5,
-     xaxt = 'n', yaxt = 'n', xlab = NA, ylab = NA, bty = 'n'
-     )
-
-#### label ####
-adjust.x = rep(0,47); 
-  adjust.x[c(46)] = .15;
-  adjust.x[c(36)] = .23;
-  adjust.x[c(32)]=.2; 
-  adjust.x[c(15, 22, 31, 26)]=.05; 
-  adjust.x[c(30, 17)] = -.17; 
-  adjust.x[c(25)] = -.25; 
-adjust.y = rep(0,47); 
-  adjust.y[c(44)] = -.3; 
-  adjust.y[c(44, 18, 8)] = -.25;  
-  adjust.y[c(23, 17, 31)] = -.2;
-  adjust.y[c(31)] = -.22;
-  adjust.y[c(36)] = -.09; 
-  adjust.y[c(25, 32, 30)] = -.12; 
-  adjust.y[c(13)]=-.045; 
-  adjust.y[c(41, 7)]=.055;
-
-text(latent.srp2$mkl$Z[, 1]+adjust.x, latent.srp2$mkl$Z[, 2]+adjust.y, 
-      Cnet%v%"vertex.names", cex=.6, pos = 3, offset = .5)
-
-#### legend ####
-legend("topleft", col = 1, pch = c(23,10,12,7,25,22,1,21), legend=c("appl./health", "StataJ", "eco./envir.", "JSS", "computation", "review",  "general","theory/method"), cex=1, box.col=0, pt.bg = "grey")
-
-#1 -> 22
-#2 -> 1
-#3 -> 21
-#4 -> 23
-#6 -> 12
-#8 -> 10
-
-###########     cloud/uncertainty plot     ##########
-
-#### pre ####
-p = latent.srp2[["sample"]][["Z"]]
-m = matrix(0,0,3)
-for (i in 1:47) {
-  p1 = cbind(p[,i,][,1],p[,i,][,2], rep((group.bw)[i],10000))
-  m = rbind(m,p1)
-}
-
-#### optimize shades ####
-
-m[m[,3]==23,3]=20
-m[m[,3]==10,3]=35
-m[m[,3]==12,3]=6
-m[m[,3]==7,3]=38
-m[m[,3]==22,3]=15
-m[m[,3]==21,3]=33
-
-#4 -> 23 appl/health ->20
-#8 -> 10 StataJ -> 35
-#6 -> 12 eco/envir -> 6
-#7 JSS -> 38
-#5 -> 25 Computation
-#1 -> 22 review -> 15
-#2 -> 1 general
-#3 -> 21 theory -> 33
-
-#### plot ####
-
-#null plot
-plot.ergmm(latent.srp2, xlab = NA, ylab = NA, vertex.col=0, edge.col=0, 
-           plot.vars=F, suppress.axes=T, print.formula=F, vertex.border=0,
-           main = NA, pie=F)
-
-# add points
-s = sample(1:470000)
-n = 20000
-for (i in 1:n) {
-  points(m[s[i],1]*1.5, m[s[i],2]*1.5, col = grey(m[s[i],3]/40), pch = 20) 
-}
-
-#### legend ####
-legend("topleft", col = grey(c(20,35,6,38,25,15,1,33)/40), pch = 19, legend = c("appl./health", "StataJ", "eco./envir.", "JSS", "computation", "review",  "general","theory/method"), cex=1, box.col=0, pt.bg = "grey")
+temp = cbind(as.vector(t(Cmatrix)) - z1, as.vector(t(Cmatrix)) - z2)
+colnames(temp) = c("latent.srp1", "latent.srp2")
+boxplot(temp, main = "Residual Comparison")
 
 #### end ####
 ```
 
-Figure 1 gives a visual aid to the observation (see Section 7.2) that many journals are not significantly different in rank, and therefore 'grouped' rankings are more appropriate than traditional ordering. We see a periphery of low-ranked journals on the left and a small cluster of leading journals around JRSS.B, but beyond that a widely dispersed middle. Centrality does not equate to rank or prestige, as we can see with *Annals of Statistics* and *Bernoulli* in the bottom-right of the plot.
-
-We can also see that the latent space model better accounts for topical connections between journals. Figure ? compares the residuals of both models. While the sender-receiver only model, `latent.srp1`, has many residuals (observed minus expected citation count) with magnitude greater than 30, the latent space model, `latent.srp2`, has only 1. The largest residual of the sender-reciever model is about 130, corresponding to citations for Statistics in Medicine (StMed) to Biometrics (Bcs). There is a clear topical connection between those journals that is not captured by general tendency to import/export citations. In the `latent.srp2` model that residual drops to 11.
-
-```{r prediction12, eval = T, echo = F, cache = T, dependson= c("setup", "setup_jrss", "latent_sr1", "latent_sr2"), warning=F, echo = F, message=F}
-
-z1 = predict.ergmm(latent.srp1)
-z2 = predict.ergmm(latent.srp2)
-
-# outliers
-plot(1:2209, as.vector(Cmatrix) - z1, pch = "*", main = "Residual Comparison", ylab = "Residual", xlab = "dyad") #outliers can indicate strong topical connections, where counts deviate from general pattern (e.g. highest value in the plot represents Statistics in Medicine (StMed) to Biometrics (Bcs) to StMed, Cmatrix[7,38])
-
-points(1:2209, as.vector(Cmatrix) - z2, col = "red", pch = "*") 
-
-legend ("topleft", legend = c("latent.srp1 (positions not estimated)", "latent.srp2 (2-D latent space)"), pch = "*", pt.cex = 1.5, col = c(1,2), cex = .8)
-```
-
-Finally, we can examine the ranking effect of including the latent space component. Figre ? shows that journals with higher scores tend to be ranked relatively higher by the latent space model, as shown by the fact that they fall below the dashed slope-one line. Journals with lower scores tend to be relatively lower by the latent space model, as they lie above the dahsed line. Thus, the latent space model seems more pronouncedly pick out the top four journals. As the authors state on p.15, there is a "diffuse opinion" that those are the four most prestigious journals. 
-
-```{r compare12S, eval = T, echo = F, cache = T, dependson= c("setup", "setup_jrss", "latent_sr1", "latent_sr2"), warning=F, echo = F, message=F, fig.keep='first'}
+<!--examine ranking effect of adding the latent space component: --> 
+```{r compare12S, eval = F, echo = F, cache = T, dependson= c("setup", "setup_jrss", "latent_sr1", "latent_sr2"), warning=F, echo = F, message=F, fig.keep='first'}
 
 #### compare scores from non-latent vs. latent space models ####
-sr12 = round(cbind(latent.srp2$mcmc.mle$beta[48:94] - latent.srp2$mcmc.mle$beta[1:47],
-       latent.srp1$mcmc.mle$beta[48:94] - latent.srp1$mcmc.mle$beta[1:47]),2)
+sr12 = round(cbind(latent.srp2$mkl$beta[48:94] - latent.srp2$mkl$beta[1:47],
+       latent.srp1$mkl$beta[48:94] - latent.srp1$mkl$beta[1:47]),2)
 rownames(sr12) = Cnet%v%"vertex.names"
 sr12b = sr12
 sr12b[,1] = rank(sr12b[,1])
@@ -491,15 +440,15 @@ srdiff = sr12b[,1]-sr12b[,2]; #latent space - non latent space.
 #### plot score comparison
 plot(sr12, pch = NA, xlab = "Latent Space (latent.srp2)", ylab = "No Latent Space (latent.srp1)", main = "Score Comparison", cex.main = .8)
 text(sr12, rownames(sr12), cex = .5)
-abline(0,1, lty=2, col="red")
 
-#### plot rank comparison
+## plot rank comparison ####
 plot(sr12b, pch = NA, xlab = "Latent Space (latent.srp2)", ylab = "No Latent Space (latent.srp1)", main = "Rank Comparison", cex.main = .8)
 text(sr12b, rownames(sr12b), cex = .5)
+abline(0,1, lty=2, col="red")
 
 #### compare latent space model with Stigler ####
 
-srs2 = round(cbind(latent.srp2$mcmc.mle$beta[48:94] - latent.srp2$mcmc.mle$beta[1:47],
+srs2 = round(cbind(latent.srp2$mkl$beta[48:94] - latent.srp2$mkl$beta[1:47],
        fit.table2$quasi),2)
 rownames(srs2) = Cnet%v%"vertex.names"
 srs2b = srs2
@@ -507,21 +456,21 @@ srs2b[,1] = rank(srs2b[,1])
 srs2b[,2] = rank(srs2b[,2])
 srdiff = srs2b[,1]-srs2b[,2]; #latent space - non latent space.
 
-### plot score comparison - didn't notice significant pattern
+#### plot score comparison
 
 plot(srs2, pch = NA, xlab = "Latent Space (latent.srp2)", ylab = "Stigler Model", main = "Score Comparison", cex.main = .8)
 text(srs2, rownames(sr12), cex = .5)
-abline(0,1, lty=2, col="red")
 
-### plot rank comparison
+## plot rank comparison - JABES, EES move most (better-ranked in Stigler) ####
 
 plot(srs2b, pch = NA, xlab = "Latent Space (latent.srp2)", ylab = "Stigler Model", main = "Rank Comparison", cex.main = .8)
 text(srs2b, rownames(srs2b), cex = .5)
+abline(0,1, lty=2, col="red")
 
 #### BIC #### 
 
 # bic.ergmm(latent.srp1, eff.obs=c("ties", "dyads", "actors")) #15742
-# bic.ergmm(latent.srp2, eff.obs=c("ties", "dyads", "actors")) #10076
+# bic.ergmm(latent.srp2, eff.obs=c("ties", "dyads", "actors")) #10082
 # bic.ergmm(latent.srp2b, eff.obs=c("ties", "dyads", "actors")) #21152
 
 # This BIC can be (reasonably) safely used to select the number of clusters or which fixed effects to include in the model. It is not clear whether it is appropriate to use this BIC to select the dimension of latent space and whether or not to include random actor effects(http://cran.r-project.org/web/packages/latentnet/latentnet.pdf)
@@ -532,25 +481,24 @@ text(srs2b, rownames(srs2b), cex = .5)
 
 ### 5.2) Latent Space Cluster Model:
 
-We can further extend this model in `latentnet` to include a clustering term for a fixed number of sub-groups. Along with cluster labels, this provides a measure of uncertainty in clustering. The resulting model reveals that many statistics journals should be thought to straddle two or more sub-groups. 
+We can further extend the model to include a clustering term for a fixed number of clusters. In addition to estimating cluster assignments this provides probabilities of cluster membership for each journal. (See @latentnet, @latentnet_jss). The resulting model reveals that divisions between clusters are soft and many journals should be thought to straddle two or more clusters.
 
-```{r latent_sr22, eval = T, dependson= c("setup", "setup_jrss"), cache=T, results='hide', echo = F, warning=F, message=F}
+```{r latent_srx2, eval = T, dependson= c("setup"), cache=T, results='hide', echo = F, warning=F, message=F}
+
+#TWO clusters in 2 and 3 dimensions
 
 latent.srp2.2 = ergmm(Cnet~euclidean(d=2, G=2) + sender(base=0) + receiver(base=0) - 1,  
   response = "citations", family="Poisson.log", control = control.ergmm(pilot.runs=4,
   interval=100, sample.size=5000, burnin=40000), seed = 123)
-```
-
-```{r latent_sr32, eval = T, dependson= c("setup", "setup_jrss"), cache=T, results='hide', echo = T, warning=F, message=F}
 
 latent.srp3.2 = ergmm(Cnet~euclidean(d=3, G=2) + sender(base=0) + receiver(base=0) - 1,  
   response = "citations", family="Poisson.log", control = control.ergmm(pilot.runs=4,
   interval=100, sample.size=5000, burnin=40000), seed = 123)
 ```
 
-```{r latent_srx3, eval = F, dependson= c("setup", "setup_jrss"), cache=T, results='hide', echo = F, warning=F, message=F}
+```{r latent_srx3, eval = T, dependson= c("setup"), cache=T, results='hide', echo = F, warning=F, message=F}
 
-#Models with three clusters in 2 and 3 dimentions
+#THREE clusters in 2 and 3 dimensions
 
 latent.srp2.3 = ergmm(Cnet~euclidean(d=2, G=3) + sender(base=0) + receiver(base=0) - 1,  
   response = "citations", family="Poisson.log", control = control.ergmm(pilot.runs=4,
@@ -561,137 +509,239 @@ latent.srp3.3 = ergmm(Cnet~euclidean(d=3, G=3) + sender(base=0) + receiver(base=
   interval=100, sample.size=5000, burnin=40000), seed = 123)
 ```
 
-<!-- models with more clusters (closer to authors' hierarchical 8 clusters) not working  -->
-```{r latent_sr26, eval = F, dependson= c("setup"), cache=T, results='hide', echo = F, warning=F, message=F}
+<!-- models with more clusters (closer to authors' hierarchical 8 clusters); stops successfully fitting at 5 or 6. I do see not much value for adding more clusters in 2-D, and doesn't fit successfully in 3-D.-->
 
-#couldn't get this to work/specify initial cluster manually
-latent.srp2.6 = ergmm(Cnet~euclidean(d=2, G=6) + sender(base=0) + receiver(base=0) - 1,  
-  response = "citations", family="Poisson.log", control = control.ergmm(pilot.runs=4,
-  interval=100, sample.size=5000, burnin=40000), seed = 123
-  #, prior = ergmm.prior(Z.K = cutree(journals.cluster, h = 0.6)) #specify manually?
-  )
+```{r latent_sr2x, eval = F, dependson= c("setup"), cache=T, results='hide', echo = F, warning=F, message=F}
+
+latent.srp2.4 = ergmm(Cnet~euclidean(d=2, G=4) + sender(base=0) + receiver(base=0) - 1,  response = "citations", family="Poisson.log",
+  seed = 123,
+  control = control.ergmm(pilot.runs=4, interval=100, sample.size=5000, burnin=40000))
+  #how to specify initial cluster manually?
+  #, prior = ergmm.prior(Z.K = cutree(journals.cluster, h = 0.6)) ?
+
+latent.srp2.5 = ergmm(Cnet~euclidean(d=2, G=5) + sender(base=0) + receiver(base=0) - 1,  response = "citations", family="Poisson.log",
+  seed = 123,
+  control = control.ergmm(pilot.runs=4, interval=100, sample.size=5000, burnin=40000))
 ```
 
-Figure ? (left, middle) shows the output of latent space cluster models with two clusters in two-dimensional (`latent.srp2.2`) and three-dimensional(`latent.srp3.2`) latent space.  We see that the three-dimensional latent-pace model more effectively separates the two clusters. The right-hand plot compares this to the hiearchical clustering of the authors. (I was unable to reliably fit a latent-space model with four or more clusters for direct comparison. Code for a few additional models and plots is in corresponding markdown document.) 
+Figure ? (left) shows the output of a three-cluster latent space model in three-dimensional space (`latent.srp3.3`). For visual clarity, an edge $i \to j$ is only shown if it accounts for at least seven percent of $j$'s total citations received. In comparison, the three-cluster model in two-dimensional space (`latent.srp2.3`, Figure ? top right) does not separate clusters well, as shown by the overlap in the variance circles (radii equals the square root of intracluster variance [@latentnet]). The middle-right plot of Figure ? shows the probabilistic group membership underlying the left-hand plot. Finally, the bottom-right plot uses the `latent.srp3.3` estimated positions, but colors nodes by the hiearchical clustering of Varin et al. The `latent.srp3.3` model agglomerates the hierarchical clusters into two major groups, one that is mostly applications and one that is theoretical, general and computational. The hierarchical 'review' cluster straddles the latent space clusters, reflecting its broad subject matter. (Code for a few additional models and plots is in the `latent_sr??` code chunks in the the markdown version of this document. I was unable to reliably fit a latent space model with six or more clusters for direct comparison to the hierarchical clustering.) 
 
-```{r latent_srx2_plot, eval = T, dependson= c("setup", "setup_jrss", "latent_sr22", "latent_sr32"), cache=T, results='hide', echo = F , warning=F, message=F}
+```{r compare_clustered, eval=T, echo = F, dependson= c("setup", "setup_jrss", "latent_sr2", "latent_srx2", "latent_srx3"), cache=T, fig.keep='last', results='hide', fig.cap= ' ', fig.height = 6, fig.cap = "Comparison of two- and three-dimensional latent space cluster models. (Left) Edges only pictured if sender accounts for at least seven percent of receiver's total citations received."}
 
-par(mfrow = c(1,3))
+#CORRELATIONS HIGH THROUGHOUT
 
-plot(latent.srp2.2, pie=T, labels=T, edge.col=0, label.cex=.5,
-     suppress.axes=T, print.formula=F, vertex.cex=2)
+## correlation 2-D 2-cluster vs. Stigler, No Cluster ####
 
-#better
-plot(latent.srp3.2, pie=T, labels=T, edge.col=0, label.cex=.5,
-     suppress.axes=T, print.formula=F, vertex.cex=2)
+#2-D, 2-cluster vs. Stigler
+cor(latent.srp2.2$mkl$beta[48:94] - latent.srp2.2$mkl$beta[1:47],fit.table2$quasi)
+plot(latent.srp2.2$mkl$beta[48:94] - latent.srp2.2$mkl$beta[1:47],fit.table2$quasi)
 
-######## #model vs. paper's hierarchical clustering ########
-plot(latent.srp3.2, pie=F, labels = T, cex=.7, vertex.cex=2, plot.vars=F, vertex.col = cutree(journals.cluster, h = 0.6)+3 , edge.col=0 ,  label.cex=.7, main = "latent.srp3.2, Hierarchical Cluster Color", suppress.axes=T, xlab=NA, ylab=NA, print.formula = F)
+#2-D 2-cluster vs. 2D No Cluster
+cor(latent.srp2.2$mkl$beta[48:94] - latent.srp2.2$mkl$beta[1:47], latent.srp2$mkl$beta[48:94] - latent.srp2$mkl$beta[1:47])
+plot(latent.srp2.2$mkl$beta[48:94] - latent.srp2.2$mkl$beta[1:47], latent.srp2$mkl$beta[48:94] - latent.srp2$mkl$beta[1:47])
 
-legend("topleft", col = 4:11, pch = 16, legend=c("review", "general", "theory/method", "appl./health", "computational","eco./envir."), cex=.8, box.col=0)
-##############
-```
+## correlation between 3-D 2-cluster and Stigler, and Non-Cluster ####
 
-<!--Some output comparison of cluster models with Stigler model and 2-D non-cluster model-->
+#3-D, 2group vs. Stigler
+cor(latent.srp3.2$mkl$beta[48:94] - latent.srp3.2$mkl$beta[1:47],fit.table2$quasi)
+plot(latent.srp3.2$mkl$beta[48:94] - latent.srp3.2$mkl$beta[1:47],fit.table2$quasi)
 
-```{r comparex2S, eval=F, echo = F, dependson= c("setup", "latent_sr2", "latent_sr22", "latent_sr32"), cache=T, fig.keep='none', results='hide'}
+#3-D 2 group vs. 2-D No Cluster
+cor(latent.srp3.2$mkl$beta[48:94] - latent.srp3.2$mkl$beta[1:47], latent.srp2$mkl$beta[48:94] - latent.srp2$mkl$beta[1:47])
+plot(latent.srp3.2$mkl$beta[48:94] - latent.srp3.2$mkl$beta[1:47], latent.srp2$mkl$beta[48:94] - latent.srp2$mkl$beta[1:47])
 
-#### correlation with Stigler, Non-Cluster ####
+## correlation between 3-D 3-cluster and Stigler, and Non-Cluster ####
 
-#2-D, 2group vs. Stigler
-cor(latent.srp2.2$mcmc.mle$beta[48:94] - latent.srp2.2$mcmc.mle$beta[1:47],fit.table2$quasi)
-plot(latent.srp2.2$mcmc.mle$beta[48:94] - latent.srp2.2$mcmc.mle$beta[1:47],fit.table2$quasi)
-abline(a=0,b=1, col="red")
+#3-D, 3 Cluster vs. Stigler
+cor(latent.srp3.3$mkl$beta[48:94] - latent.srp3.3$mkl$beta[1:47],fit.table2$quasi)
+plot(latent.srp3.3$mkl$beta[48:94] - latent.srp3.3$mkl$beta[1:47],fit.table2$quasi)
 
-#biggest change journal?
-(Cnet%v%"vertex.names")[which.max(abs((latent.srp2.2$mcmc.mle$beta[48:94] - latent.srp2.2$mcmc.mle$beta[1:47]) - fit.table2$quasi))]
-max(abs((latent.srp2.2$mcmc.mle$beta[48:94] - latent.srp2.2$mcmc.mle$beta[1:47]) - fit.table2$quasi))
-#biggest diff is Environmental and Ecological Statistics (EES), .36 higher in latent space
+#3-D 3 group vs. 2-D No cluster
+cor(latent.srp3.3$mkl$beta[48:94] - latent.srp3.3$mkl$beta[1:47], latent.srp2$mkl$beta[48:94] - latent.srp2$mkl$beta[1:47])
+plot(latent.srp3.3$mkl$beta[48:94] - latent.srp3.3$mkl$beta[1:47], latent.srp2$mkl$beta[48:94] - latent.srp2$mkl$beta[1:47], type = "n")
+text(latent.srp3.3$mkl$beta[48:94] - latent.srp3.3$mkl$beta[1:47], latent.srp2$mkl$beta[48:94] - latent.srp2$mkl$beta[1:47], labels = Cnet%v%"vertex.names", cex = .5)
 
-#3-D 2group vs. Stigler
-cor(latent.srp3.2$mcmc.mle$beta[48:94] - latent.srp3.2$mcmc.mle$beta[1:47],fit.table2$quasi)
-plot(latent.srp3.2$mcmc.mle$beta[48:94] - latent.srp3.2$mcmc.mle$beta[1:47],fit.table2$quasi)
-
-#biggest change journal?
-(Cnet%v%"vertex.names")[which.max(abs((latent.srp3.2$mcmc.mle$beta[48:94] - latent.srp3.2$mcmc.mle$beta[1:47]) - fit.table2$quasi))]
-max(abs((latent.srp3.2$mcmc.mle$beta[48:94] - latent.srp3.2$mcmc.mle$beta[1:47]) - fit.table2$quasi))
-#biggest diff is International Statistical Review (ISR), .55 higher in Stigler
-
-#2-D 2 group vs. 2D No group
-cor(latent.srp2.2$mcmc.mle$beta[48:94] - latent.srp2.2$mcmc.mle$beta[1:47], latent.srp2$mcmc.mle$beta[48:94] - latent.srp2$mcmc.mle$beta[1:47])
-plot(latent.srp2.2$mcmc.mle$beta[48:94] - latent.srp2.2$mcmc.mle$beta[1:47], latent.srp2$mcmc.mle$beta[48:94] - latent.srp2$mcmc.mle$beta[1:47])
-
-#biggest change journal?
-which.max(abs(
-  (latent.srp2.2$mcmc.mle$beta[48:94] - latent.srp2.2$mcmc.mle$beta[1:47]) - 
-    (latent.srp2$mcmc.mle$beta[48:94] - latent.srp2$mcmc.mle$beta[1:47]) 
-  ))
-(Cnet%v%"vertex.names")[which.max(abs(
-  (latent.srp2.2$mcmc.mle$beta[48:94] - latent.srp2.2$mcmc.mle$beta[1:47]) - 
-    (latent.srp2$mcmc.mle$beta[48:94] - latent.srp2$mcmc.mle$beta[1:47]) 
-  ))]
-max(abs(
-  (latent.srp2.2$mcmc.mle$beta[48:94] - latent.srp2.2$mcmc.mle$beta[1:47]) - 
-    (latent.srp2$mcmc.mle$beta[48:94] - latent.srp2$mcmc.mle$beta[1:47]) 
-  ))
-#biggest diff is Stat Journal (StataJ) which is .61 higher in clustered model
-
-##### rank comparison 2-D 2-cluster vs. Stigler? ####
-sl.raw = round(cbind(fit.table2$quasi, latent.srp2.2$mcmc.mle$beta[48:94] - latent.srp2.2$mcmc.mle$beta[1:47]),3)
+## rank comparison 3-D 3-cluster vs. Stigler? ####
+sl.raw = round(cbind(fit.table2$quasi, latent.srp3.3$mkl$beta[48:94] - latent.srp3.3$mkl$beta[1:47]),3)
 sl = matrix(as.numeric(as.character(sl.raw)),47,2)
 rownames(sl) = Cnet%v%"vertex.names"
-sl = sl[order(sl[,1]),]
-sl = sl[47:1,]
+sl = sl[order(sl[,1], decreasing = T),]
 sl[,1] = 1:47
 sl = sl[order(sl[,2]),]
 sl[,2] = 47:1
 sl = sl[47:1,]
 sl.rank = cbind(sl,sl[,2]-sl[,1])
-plot(sl.rank[,1], sl.rank[,2], xlab = "Stigler", ylab = "Latent 2-D, 2 Group", main = "Rank", type="n")
+plot(sl.rank[,1], sl.rank[,2], xlab = "Stigler", ylab = "Latent 3-D, 3 Group", main = "Rank", type="n")
 text(sl.rank[,1], sl.rank[,2], pos = 1, label = rownames(sl.rank), cex=.5)
 
-##### rank comparison 3-D 2-cluster vs. Stigler? ####
-sl.raw = round(cbind(fit.table2$quasi, latent.srp3.2$mcmc.mle$beta[48:94] - latent.srp3.2$mcmc.mle$beta[1:47]),3)
+#biggest change:
+sl.rank[,1]-sl.rank[,2] #StNee -> 6 worse-ranked in cluster model
+
+## rank comparison 3-D 3-cluster vs. 2-D no cluster? ####
+sl.raw = round(cbind(latent.srp2$mkl$beta[48:94] - latent.srp2$mkl$beta[1:47], latent.srp3.3$mkl$beta[48:94] - latent.srp3.3$mkl$beta[1:47]),3)
 sl = matrix(as.numeric(as.character(sl.raw)),47,2)
 rownames(sl) = Cnet%v%"vertex.names"
-sl = sl[order(sl[,1]),]
-sl = sl[47:1,]
+sl = sl[order(sl[,1], decreasing = T),]
 sl[,1] = 1:47
 sl = sl[order(sl[,2]),]
 sl[,2] = 47:1
 sl = sl[47:1,]
 sl.rank = cbind(sl,sl[,2]-sl[,1])
-plot(sl.rank[,1], sl.rank[,2], xlab = "Stigler", ylab = "Latent 3-D, 2 Group", main = "Rank", type="n")
-text(sl.rank[,1], sl.rank[,2], pos = 1, label = rownames(sl.rank), cex=.5)
+#biggest change:
+sl.rank[,1]-sl.rank[,2] #EES - 9 worse in cluster model
 
-##### rank comparison 2-D 2-cluster vs. 2-D no cluster? ####
-sl.raw = round(cbind(latent.srp2$mcmc.mle$beta[48:94] - latent.srp2$mcmc.mle$beta[1:47], latent.srp2.2$mcmc.mle$beta[48:94] - latent.srp2.2$mcmc.mle$beta[1:47]),3)
-sl = matrix(as.numeric(as.character(sl.raw)),47,2)
-rownames(sl) = Cnet%v%"vertex.names"
-sl = sl[order(sl[,1]),]
-sl = sl[47:1,]
-sl[,1] = 1:47
-sl = sl[order(sl[,2]),]
-sl[,2] = 47:1
-sl = sl[47:1,]
-sl.rank = cbind(sl,sl[,2]-sl[,1])
-plot(sl.rank[,1], sl.rank[,2], xlab = "Latent 2-D, No Group", ylab = "Latent 2-D, 2 Group", main = "Rank", type="n")
-text(sl.rank[,1], sl.rank[,2], main = "Rank", pos = 1, label = rownames(sl.rank), cex=.5)
+###### plot to show - compare change in rank to clustering ####
 
-##### Another plot to compare model output ####
-u = cbind(round(fit.table2$quasi,3), round(latent.srp2$mcmc.mle$beta[48:94] - latent.srp2$mcmc.mle$beta[1:47],3), round(latent.srp2.2$mcmc.mle$beta[48:94] - latent.srp2.2$mcmc.mle$beta[1:47],3))
+par(mai = c(.1,.1,.1,.1))
+layout(matrix(c(1,1,1,2,2,1,1,1,3,3,1,1,1,3,3,1,1,1,4,4), 4, 5, byrow = TRUE), respect = T)
+
+#plot(sl.rank[,1], sl.rank[,2], xlab = "2-D, No cluster", ylab = "Latent 3-D, 3 Cluster", main = "Rank", type="n")
+#text(sl.rank[,1], sl.rank[,2], pos = 1, label = rownames(sl.rank), cex=.5)
+
+#only show > 10%
+strength2 = .07 #only include "strong senders" [different from plot in "network_thin"], i.e. sender accounts for >.07 = 7% of receivers citations in
+Cmatrix.norm2 = t(Cmatrix/rowSums(Cmatrix)) #entries are i's to j as percentage of total into j
+Cnet.norm2 = as.network(Cmatrix.norm2, directed=T, matrix.type="a",
+            ignore.eval=F, names.eval="citations")
+col2 = Cnet.norm2%e%"citations"
+col2[col2 < strength2] = 0
+col2 = gray(1-col2, alpha = 1)
+col2[col2=="#FFFFFFFF"]=NA
+
+plot(latent.srp3.3, pie=F, labels=T, edge.col=col2, label.cex=.5,
+     suppress.axes=T, print.formula=F, vertex.cex=2, vertex.border = NA,
+     suppress.center = T)
+
+plot(latent.srp2.3, pie=F, labels=F, edge.col=0, label.cex=.5, vertex.border = NA,
+     suppress.axes = T, print.formula=F, vertex.cex=2.5, xlab = NA, ylab = NA,
+     suppress.center = T)
+
+#plot(latent.srp3.3, pie=F, labels=T, edge.col=0, label.cex=.5,
+#    suppress.axes=T, print.formula=F, vertex.cex=2)
+
+#pie
+plot(latent.srp3.3, pie=T, labels=F, edge.col=0, label.cex=.5, vertex.border = NA,
+     suppress.axes=T, print.formula=F, vertex.cex=2, suppress.center = T)
+
+# vs. paper's hierarchical clustering
+plot(latent.srp3.3, pie=F, labels = F, cex=.7, vertex.cex=3, plot.vars=F, vertex.col = cutree(journals.cluster, h = 0.6)+3 , vertex.border = NA, edge.col=0 ,  label.cex=.7, main = "latent.srp3.3, Hierarchical Cluster Color", suppress.axes=T, xlab=NA, ylab=NA, print.formula = F, plot.means = F, suppress.center = T)
+
+legend("topleft", col = 4:11, pch = 16, legend=c("review", "general", "theory/method", "appl./health", "computational","eco./envir.", "JSS", "StataJ"), cex=.7, box.col=0)
+
+## Multipe model comparison plot (Stilger, 2-D No Cluster, 2-D 2 Cluster, 3-D 3 Cluster) ####
+u = cbind(fit.table2$quasi, latent.srp2$mkl$beta[48:94] - latent.srp2$mkl$beta[1:47], latent.srp2.2$mkl$beta[48:94] - latent.srp2.2$mkl$beta[1:47], latent.srp3.3$mkl$beta[48:94] - latent.srp3.3$mkl$beta[1:47])
 rownames(u) = Cnet%v%"vertex.names"
-colnames(u) = c("Stigler", "latent.srp2", "latent.srp2.2")
+colnames(u) = c("Stigler", "latent.srp2", "latent.srp2.2", "latent.srp3.3")
 u = u[order(u[,1],decreasing = T),] #raw number chart
-plot(1:47, u[47:1,1], type="l")
-points(1:47, u[47:1,2], type="l", col="red")
-points(1:47, u[47:1,3], type="l", col="blue")
-legend("topleft", legend = c( "Stigler", "2D", "2D 2-Cluster"), lty=1, col = c(1,2,"blue"))
+#plot(1:47, u[47:1,1], type="l", ylab = "score", xlab = "rank")
+#points(1:47, u[47:1,2], type="l", col="red")
+#points(1:47, u[47:1,3], type="l", col="blue")
+#points(1:47, u[47:1,4], type="l", col="green")
+#legend("topleft", legend = c( "Stigler", "2-D", "2-D 2 Cluster", "3-D 3 Cluster"), lty=1, col = c(1,2,"blue"))
 
 ##### end #####
 ```
 
-We can potentially use a cluster model to compare journals which span several topic groups, as most seem to. An overall measure of influence could be constructed as a weighted average of influence in sub-groups. For this subset of journals there does not appread to be strong clustering, but that might change if we expand beyond statistics journals. I think that this would add more to the analysis if the journals occupied more distinct clusters. (Some experimental code is in the `subclassmodel` code chunk.)
+The scores and ranks calculated from the cluster models are very similar to earlier models. (Code to compare models is in the `compare_clustered` code chunk in the markdown version of this document.) Only a few journal ranks change by more than a few places. We reiterate that ranking differences may not be significant, but reference them for ease of comparison.
+
+### 6) Network Structure:
+
+The Stigler model offers a method to test for significant difference in the export scores of two journals, but does not give an overall picture of network hierarchy or structure. Along with visualization, descriptive network statistics help to analyze network structure.
+
+```{r triads, eval=T, cache=T, echo=F, results='asis'}
+cat('\n![Triad types](/Users/jac/Downloads/triads.png)\n')
+#cat('\n![This is myfile_1.png](/Users/jac/Downloads/triads2.png)\n')
+#triad types: http://www.paulmichaelcohen.com/wp-content/uploads/2012/08/1-s2.0-S0378873301000351-gr1.jpg
+# or see ?triad.classify
+```
+
+The dispersed hierarchy of statistics journals is reflected in the triad census. In the thinned network of Figure 1, 021U triads make up the majority of triads other than the single-edge type, 012, which suggests hierarchy and overall sparsity. However, there are also significant counts of 102 and 111D type triads, indicating more lateral connections. (See Figure ? for triad labels.) There are no cyclic triads of type O30C and 120C, which would indicate a lack of hieracrchy, and very few of the full (300) and near-full (210) types which also contain cycles.
+
+In contrast, in the full network the most popular triads are by far the full (300) or almost-full (210) types, indicative of the network density. The R output below shows all network triad statistics for the thinned down (`Cnet.strong`) and full network (`Cnet`).
+
+```{r network_census, dependson = c("setup", "network_thin"), eval=T, cache=T, echo=c(1,2), results='markup'}
+summary.statistics(Cnet.strong~triadcensus())
+summary.statistics(Cnet~triadcensus())
+#summary.statistics(Cnet.strong~transitive()+intransitive)
+#why don't the numbers sum as expected?
+#transitive triads are those of type 120D, 030T, 120U, or 300
+#88(2)+77+7(2)+36 #multiples account for symmetry but still off, supposed to be 318, 15 short
+#intransitive triads are those of type 111D, 201, 111U, 021C, or 030C
+#189+3(2)+5+92 #multiples account for symmetry but still off, supposed to be 297, 5 short
+```
+
+
+
+### 7) Conclusions:
+
+$\pagebreak$
+
+
+<!--Notes:-->
+
+<!--test for significant difference between two scores for this model? still use quasi variance?-->
+
+<!-- Connect to PAGE RANK? "node ranking of graphs" and "node ranking problem". citation <-> hyperlink. Page rank considers secondary important = citations by important journals.https://www.cs.umd.edu/class/spring2008/cmsc828g/Slides/node-ranking.pdf" --> 
+
+```{r page_rank, eval = F, results = 'hide', echo = F}
+#"Page rank is the best-known technique for link-based importance ranking"
+#https://www.cs.umd.edu/class/spring2008/cmsc828g/Slides/node-ranking.pdf
+#page rank to citation net articles:
+#http://arxiv.org/pdf/0901.2640.pdf <- prob most useful, good summary
+#http://arxiv.org/pdf/1012.4872.pdf (damping factor)
+#http://onlinelibrary.wiley.com/doi/10.1002/asi.21452/epdf (weighted page rank)
+library(igraph)
+Cgraph = graph.adjacency(Cmatrix, weighted=T)
+Cgraph.page.rank = page.rank(Cgraph)$vector 
+##"If weights arg is NULL and the graph has a weight edge attribute then that is used."
+round(100*Cgraph.page.rank,2)
+plot(Cnet, vertex.cex = 50*Cgraph.page.rank, edge.col = 0, label=Cnet%v%"vertex.names", label.cex=.7)
+#not working well bc not normalized?
+Cgraph.norm = graph.adjacency(Cmatrix.norm, weighted=T)
+Cgraph.page.rank.norm = page.rank(Cgraph.norm)$vector 
+plot(Cgraph.page.rank, Cgraph.page.rank.norm)
+cor(Cgraph.page.rank, Cgraph.page.rank.norm) #.37
+plot(Cnet, vertex.cex = 50*Cgraph.page.rank.norm, edge.col = 0, label=Cnet%v%"vertex.names", label.cex=.7)
+par(mfrow = c(1,1))
+#eigenfactor method normalizes
+#for the stigler: "Nas.network(Cmatrix, directed=T, matrix.type="a", ignore.eval=F,  names.eval="citations")normalization for journal size, which is explicit in the definitions of various impact factor and article influence measures, is thus implicit for the Stigler model."
+plot(Cgraph.page.rank, cite.ratio) #no corellation
+
+#topic-sensitive page rank the equivalent of subclassing the journals?
+
+#### ####
+```
+
+<!--Modelling with structural elements? better than a triad census? We can include structural features in a network model. We can add `transitive` and `intransitive` terms to a model on the thinned down citation network. These tally the transitive and intransitive triads respectively (see @ergm). We use the thinned network because the transitivity terms do not reflect the edge weights (citation counts) in their calculations. The estimated coefficients are very small.-->
+
+```{r ergm.cyclic, dependson = c("setup", "network_thin"), eval=F, cache=T, echo=F, warning=F, message=F, results = 'hide'}
+
+library(ergm)
+#use thinned network because it's the binary version:
+#ergm.cyclic1 = ergm(Cnet.strong~triadcensus())
+#ergm.cyclic2 = ergm(Cnet.strong~ triadcensus(c(4,5,7,8)))   #example that worked
+#ergmm.cyclic2b = ergm(Cnet.strong~ triadcensus(c(1,2,3,4,7,8,10,11,12,13,15,16)) ) #taking larger coefficients of ergm.cyclic1. No Std. Error. adjust fit parameters?
+ergmm.cyclic1 = ergmm(Cnet.strong ~ euclidean(d = 2) + transitive() + intransitive())
+ergmm.cyclic2 = ergmm(Cnet.strong ~ euclidean(d = 2) + sender(base = 0) + receiver(base = 0) - 1 + transitive() + intransitive())
+
+#summary.statistics(Cnet ~ transitive() + intransitive())
+#summary.statistics(Cnet.strong ~ transitive() + intransitive())
+#mcmc.diagnostics.ergmm(ergm.cyclic2)
+
+```
+
+<!--Model with valued net package. For description of the statistics used in this model see [@krivitsky2012].-->
+```{r ergmm.cyclic, dependson = "setup", eval=F, cache=T, echo=F, results='hide', warning=FALSE}
+  
+structure1 = ergm(Cnet ~ transitiveweights(twopath="min", combine="sum", affect="geomean") + 
+  cyclicalweights(twopath="min", combine="sum", affect="geomean"), 
+  response ="citations", reference =~Poisson)
+```
+
+
+<!-- Extending to full data set would require some web scraping -->
+
+<!-- sublcassmodel? does this actuallly make sense to do? An overall measure of influence could be constructed as a weighted average of influence in sub-groups. Some experimental code is in the `subclassmodel` code chunk.-->
 
 ```{r subclassmodel, eval = F, dependson= c("setup", "latent1", "latent5"), cache=T, results='hide', echo = F , warning=F, message=F}
 
@@ -734,41 +784,10 @@ cor(cite.ratio, fit.table2$quasi)
 cor(cite.ratio1, fit.table2$quasi)
 cor(cite.ratio2, fit.table2$quasi)
 
-#####
-```
-
-### 6) Network Structure:
-
-The Stigler model offers a method for testing if there is significant difference in the export scores of any two journals, but does not give an overall picture of network hierarchy. Along with visualization, descriptive network statistics and network models help to answer this question.
-
-Figure ? only shows edges ($i \to j$) in the network if $j$ accounts for at least seven percent of citations by $i$. It shows that several journals are "parents" of a few beneath them, but there is only partial ordering upward. It is evident why JRSS-B, AoS, Bka and JASA are the top four ranked journals of the Stigler and latent space models.
-
-```{r network_thin, dependson = "setup", eval=T, cache=T, fig.keep='none', results = 'hide', echo=F, fig.cap = "Edges included at the 7% threshold. Vertex sizes are scaled to export scores under the Stigler model.", fig.height=9}
-
-strength = .07 #only include strong connections, e.g. >.07 ~ 7% of citations to
-#interesting pot with strength = .1 (100 edges remain)  
-Cstrong = Cmatrix
-Cstrong[Cmatrix.norm<strength] = 0
-Cnet.strong = as.network(t(Cstrong))
-plot.network(Cnet.strong, label=Cnet.strong%v%"vertex.names", edge.col="grey", label.col = 1, label.cex=.7, vertex.cex=(fit.table2$quasi+2)/3, vertex.border=F, arrowhead.cex=1) 
-
-rowSums(Cstrong>0)
-summary.statistics(Cnet.strong~triadcensus())
-```
-
-This is also reflected in the high count of 021U type triads in the thinned down network, which make up the majority of triads other than the single-edge type (012).
-
-```{r network_census, dependson = "setup", eval=T, cache=T, echo=T, results='asis'}
-summary.statistics(Cnet~triadcensus())
-summary.statistics(Cnet.strong~triadcensus())
-cat('\n![This is myfile_1.png](/Users/jac/Downloads/triads.png)\n')
-cat('\n![This is myfile_1.png](/Users/jac/Downloads/triads2.png)\n')
-#triad types: http://www.paulmichaelcohen.com/wp-content/uploads/2012/08/1-s2.0-S0378873301000351-gr1.jpg
-# ors see ?triad.classify
+##### end ####
 ```
 
 <!--On average, cyclic triads ($i \to j \to k \to i$ or $i \to j \to k \to i$) account for 44% of all triads incident on a given node. Non-cyclic triads ($i \to j, i \to k, j \to k$ or $i \to j, i \to k, k \to j$) make up the rest. In general, a lower percentage of cyclic triads should correspond to more hierarchy, so this is suggestive of mild hierarchy. This observation is embedded in the following model, which returns significant transitivite and cyclical coefficients, their values $0.35$ and $-0.21$ respectively.--> 
-
 ```{r network_triads, eval=F, dependson = c("setup","network_thin"), , cache=T, warning=F, echo = F, message=F, fig.keep='none'}
 
 library(gtools)
@@ -795,23 +814,12 @@ abline(h=.5, lty=2)
 
 ```
 
-Finally, we can show this via network modelling. An `ergm` model on a thinned version of the network (applying the same threshold as in Figure ?) indicates that intransitive triads are significantly less likely than transitive ones. 
-
-```{r ergm.cyclic, dependson = c("setup", "network_thin"), eval=T, cache=T, results = 'hide', echo=F}
-Cnet.strong = as.network(Cstrong) #binary
-
-#use thinned network because it's the binary version:
-#ergm.cyclic1 = ergm(Cnet.strong~triadcensus())
-ergm.cyclic2 = ergm(Cnet.strong~ triadcensus(c(4,5,7,8)))   #example that worked
-#ergm.cyclic2b = ergm(Cnet.strong~ triadcensus(c(1,2,3,4,7,8,10,11,12,13,15,16)) ) #taking larger coefficients of ergm.cyclic1. No Std. Error. adjust fit parameters?
-ergm.cyclic3 = ergm(Cnet.strong~ transitive() + intransitive())
+<!--note how uninformative-->
+```{r basicplot, eval = F, echo = F, dependson= c("setup", "setup_jrss"), warning=F, echo = F, message=F}
+#coloring is due to the clustering models of the authors
+#node sizes are scaled to the cited/citing ratio
+plot(Cnet, edge.col=NA, label = Cnet%v%"vertex.names", vertex.cex = (cite.ratio+1)/2, label.cex=.7, vertex.col = cutree(journals.cluster, h = 0.6)+4, vertex.border = 0)
 ```
 
-```{r ergmm.cyclic, dependson = "setup", eval=T, cache=T, echo=T, results='hide', warning=FALSE}
-  
-structure1 = ergm(Cnet ~ transitiveweights(twopath="min", combine="sum", affect="geomean") + 
-  cyclicalweights(twopath="min", combine="sum", affect="geomean"), 
-  response ="citations", reference =~Poisson)
-```
+#  References
 
-For description of the statistics used in this model see \cite{krivitsky2012}. 
