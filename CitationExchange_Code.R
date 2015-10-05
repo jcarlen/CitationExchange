@@ -2,7 +2,7 @@
 # Journals’ by Cristiano Varin, Manuela Cattelan and David Firth"
 
 ------------------------------------------------------------------------------
-
+  
 # Pre-Processing -------
 
 library(latentnet)
@@ -10,12 +10,12 @@ library(ergm.count)
 library(stats)
 
 download.file("http://cristianovarin.weebly.com/uploads/1/5/1/5/15156956/varin_cattelan_firth_supplement.zip", "varin_cattelan_firth_supplement.zip")
-unz("varin_cattelan_firth_supplement.zip", "Varin_Cattelan_Firth_supplement")
+unzip("varin_cattelan_firth_supplement.zip")
 Cmatrix <- as.matrix(read.csv("Varin_Cattelan_Firth_supplement/Data/cross-citation-matrix.csv", row.names = 1))
 
 #as valued net (#see Modeling valued networks with statnet paper)
 #removes self-citations; Stigler method also excluded self-citations
-Cnet = as.network(Cmatrix, directed=T, matrix.type="a", ignore.eval=F,  names.eval="citations")
+Cnet = as.network(t(Cmatrix), directed=T, matrix.type="a", ignore.eval=F,  names.eval="citations")
 
 # Pre-Processing 2: Code from from Varin_Cattelan_Firth_supplement.R published with article -------
 
@@ -65,18 +65,17 @@ fit.table <- data.frame(quasi = export.scores[sort.id], qse = qse$qvframe$quasiS
 ## Some post-processing/alphabetizing (not from author supplement)
 
 rownames(fit.table)
-rownames(fit.table)[c(1,6,20)] = c("JRSS.B", "JRSS.A", "JRSS.C")
 match(rownames(fit.table),Cnet%v%"vertex.names")
 fit.table2 = fit.table[order(match(rownames(fit.table),Cnet%v%"vertex.names")),]
 
 # Network model 1: Sender-receiver model with citation counts ~ Poisson -------
 
 latent.srp1 = ergmm(Cnet~ sender(base = 0) + receiver(base = 0) - 1, response = "citations",
-                    family = "Poisson.log", control = control.ergmm(pilot.runs = 1), seed = 123)
+                    family = "Poisson.log", control = control.ergmm(burnin = 40000), seed = 123)
 
-# Correlation of model  with Stigler (0.95)
+# Correlation of model with Stigler (0.95)
 
-cor(latent.srp1$mcmc.mle$beta[48:94] - latent.srp1$mcmc.mle$beta[1:47], fit.table2$quasi)
+cor(latent.srp1$mkl$beta[48:94] - latent.srp1$mkl$beta[1:47], fit.table2$quasi)
 
 # Network model 2: Two-dimensional latent-space model  -------
 # (this model takes a while to run > 1hr)
@@ -87,11 +86,12 @@ latent.srp2 = ergmm(Cnet~euclidean(d = 2) + sender(base = 0) + receiver(base = 0
 
 # Correlation of output with Stigler (0.99)
 
-cor(latent.srp2$mcmc.mle$beta[48:94] - latent.srp2$mcmc.mle$beta[1:47], fit.table2$quasi)
+cor(latent.srp2$mkl$beta[48:94] - latent.srp2$mkl$beta[1:47], fit.table2$quasi)
 
 # Network Plot 1 (Fig. 12a) -------
+# slightly different/rotated than comment version. Changed some control settings. 
 
-vc2 = (latent.srp2$mcmc.mle$beta[48:94] - latent.srp2$mcmc.mle$beta[1:47])/2+1
+vc2 = (latent.srp2$mkl$beta[48:94] - latent.srp2$mkl$beta[1:47])/2+1
 
 plot(latent.srp2, labels = T, cex=.7, label.cex=.5,
      plot.vars=F, vertex.col = cutree(journals.cluster, h = 0.6)+3, 
@@ -127,7 +127,7 @@ legend("topleft", col = 4:11, pch = 16, legend=c("review", "general", "theory/me
 
 # Network Plot 1 Optimized for Grayscale (Fig. 12a) -------
 
-vc2 = (latent.srp2$mcmc.mle$beta[48:94] - latent.srp2$mcmc.mle$beta[1:47])/2+1
+vc2 = (latent.srp2$mkl$beta[48:94] - latent.srp2$mkl$beta[1:47])/2+1
 
 group.bw = cutree(journals.cluster, h = 0.6)
 group.bw[group.bw==1]=22
@@ -142,25 +142,49 @@ plot(latent.srp2$mkl$Z[, 1],latent.srp2$mkl$Z[, 2],
      bg="grey",
      #col = grey(cutree(journals.cluster, h = 0.6)/9),  
      #col = cutree(journals.cluster, h = 0.6)+3
-     lwd = 1, cex = vc2 +.5,
+     lwd = .7, cex = vc2 +.5,
      xaxt = 'n', yaxt = 'n', xlab = NA, ylab = NA, bty = 'n'
-     )
+)
 
-legend("topleft", pch = c(22,1,21,23,5,12,7,10), pt.bg ="grey",
+legend("topright", pch = c(22,1,21,23,5,12,7,10), pt.bg ="grey",
        legend=c("review", "general", "theory/method", "appl./health", "computation","eco./envir.", "JSS", "StataJ"),
-       cex=.8, box.col=0)
+       cex=.7, box.col=0)
 
 adjust.x = rep(0,47); 
-  adjust.x[c(36, 46)] = .25;
-  adjust.x[c(22, 32)]=.2; 
-  adjust.x[c(15)]=.05; 
-  adjust.x[c(25, 30)] = -.12; adjust.x[c(17)] = -.25; 
+adjust.x[c(8, 23)]=.1;
+adjust.x[c(36)]=.2; 
+adjust.x[c(12, 30)] = -.12;
+adjust.x[c(17)] = -.25; 
+
 adjust.y = rep(0,47); 
-  adjust.y[c(8, 17, 23, 31, 44, 47)] = -.3; 
-  adjust.y[c(44)] = -.25;  
-  adjust.y[c(47)] = -.2;
-  adjust.y[c(36)] = -.1;
-  adjust.y[c(32)] = -.12; adjust.y[c(13, 30)]=-.045; 
+adjust.y[c(32)] = .1;
+adjust.y[c(31)] = -.3;
+adjust.y[c(13, 30)]=-.045; 
 
 text(latent.srp2$mkl$Z[, 1]+adjust.x, latent.srp2$mkl$Z[, 2]+adjust.y, 
-      Cnet%v%"vertex.names", cex=.6, pos = 3, offset = .5)
+     Cnet%v%"vertex.names", cex=.6, pos = 3, offset = .5)
+
+# Network Plot 2 Optimized for Grayscale (Fig. 12b) ####
+
+n = 47
+N = 1000 
+p = latent.srp2[["sample"]][["Z"]]
+m = matrix(0,0,3)
+for (i in 1:n) {
+  p1 = cbind(p[,i,][,1],p[,i,][,2], rep((cutree(journals.cluster, h = 0.6)+3)[i], N))
+  m = rbind(m,p1)
+}
+
+#null plot:
+plot.ergmm(latent.srp2, xlab = NA, ylab = NA, vertex.col=0, edge.col=0, 
+           plot.vars=F, suppress.axes=T, print.formula=F, vertex.border=0,
+           xlim = c(-4,4), ylim = c(-3,5), main = NA, pie=F)
+
+#add points
+s = sample(1:(n * N * 10))
+for (i in 1:(n * N)) {
+  points(m[s[i],1], m[s[i],2], col = gray((m[s[i],3]-3)/9), pch=".", cex = 3)
+}
+
+legend("topleft", col = gray(1:8/9), pch = 16, legend=c("review", "general", "theory/method", "appl./health", "computational","eco./envir.", "JSS", "StataJ"), cex=.8, box.col=0)
+
