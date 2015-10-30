@@ -13,7 +13,7 @@ library(latentnet)
 library(ergm.count)
 #load matrix
 
-Cmatrix <- as.matrix(read.csv("~/Documents/citation/Citation_supplement/Data/cross-citation-matrix.csv", row.names = 1)) #47 x 47
+Cmatrix <- as.matrix(read.csv("~/Documents/citation/Citation_supplement/Data/cross-citation-matrix.csv", row.names = 1)) #47 x 47 #
 
 #Self-citations are removed: The highest raw counts are from self-citations of CSDA (486) and StMed (628), which would seem to skew any analysis of importance. The authors exclude self-citations for the Stigler method: "Both the eigenfactor and the article influence score are computed over a 5-year time period, with journal self-citations removed to eliminate possible sources of manipulation."
 
@@ -132,7 +132,7 @@ Figures ? and ? below provide examples of citation network plots in which distan
 
 The Stigler model estimates "export scores", $u_i$, such that $c_{ij}$ is assumed binomially distributed with $E(c_{ij}) = t_{ij}\exp{(\alpha_i+\beta_j)} \text{ and } u_i = \alpha_i - \beta_i$, as in 'quasi-symmetry' formulation (4). Note that in Varin et al. the data is stored in an $47\text{ x }47$ cross-citation matrix $C$, in which $c_{ij}$ is the number of times journal $i$ is cited *by* journal $j$ excluding self-citations. $T$ is the symmetric total citation matrix, i.e. $t_{ij} = c_{ij} +c_{ji} \text{ for } i \neq j \text{ and } 0$ otherwise. To faciliate modeling in this paper I have transposed the data to fit a standard network framework such that $c_{ij}$ is the number of times journal $i$ cites journal $j$. This change is reflected in the notation below. In this notation, the 'quasi-symmetry' formulation (4) is expressed $E(c_{ij}) = t_{ij}\exp{(\alpha_j+\beta_i)} \text{ and } u_i = \alpha_i - \beta_i$.
 
-We can place these assumptions in the context of an exponential random graph model (ERGM) on a valued network, where edge weights are directed citation counts. A direct extension of the Stigler model would retain the assumption of binomially distributed citations. However, for ease of modelling we assume Poisson-distributed citatons with mean $c_{ij}$, thereby modelling a count instead of a proportion. We include `sender` ($\beta_i$) and `receiver` ($\alpha_i$) effects, so that our assumption is $c_{ij} \sim pois(\lambda_{ij} = exp(\beta_i + \alpha_j))$. <!--note change from varin et al notation.--> The model formula is below.
+We can place these assumptions in the context of a valued exponential random graph model (valued ERGM), where edge weights are directed citation counts. (See @krivitsky2015 and @krivitsky2012.) A direct extension of the Stigler model would retain the assumption of binomially distributed citations. However, to facilitate modelling we assume Poisson-distributed citatons with mean $c_{ij}$, thereby modelling a count instead of a proportion. We include `sender` ($\beta_i$) and `receiver` ($\alpha_i$) effects, so that our assumption is $c_{ij} \sim pois(\lambda_{ij} = exp(\alpha_j + \beta_i))$. <!--note change from varin et al notation.--> 
 
 <!--latent.srp0 is the natural model, but for equivalence to the Stigler model I used the no intercept model, latent.srp1, below.-->
 
@@ -143,7 +143,7 @@ latent.srp0 = ergmm(Cnet~ sender(base=0) + receiver(base=0), #base=0 OK because 
   control = control.ergmm(pilot.runs=1), seed = 123)
 ```
 
-Computational note: We can easily implement this (Poisson) network model using the `latentnet` package in R [@latentnet]. The Poisson model is used because in  `latentnet` I was unable to set unique binomial trials for each $ij$, although the `ergmm` helper functions seems to indicate that it is possible. (See details in the `binomial_error` code chunk in the markdown version of this document.) It may seem natural to use the `ergm.count` [@ergmcount] package for weighted networks instead, but that package seems not to have `sender` and `receiver` terms implemented. In addition, using the `latentnet` package sets up later analysis.
+We implement this model using the `latentnet` package in R [@latentnet]. The Poisson model is used because binomial families in `latentnet` demand a constant number of trials across dyads. <!-- However, the `ergmm` helper made it seem that this would be possible. (See details in the `binomial_error` code chunk in the markdown version of this document.)--> It may seem natural to use the `ergm.count` [@ergmcount] package for weighted networks instead, but that package does not have `sender` and `receiver` terms implemented (see Section 5.2.5 of @krivitsky2012). In addition, this preliminary network model is equivalent <!--estimates the same up to constrainst/shift and method of fitting?--> to a Poisson GLM (see `glm` code chunk), but using the `latentnet` package sets up later analysis. The model formula is below, `latent.srp1`.
 
 ```{r binomial_error, eval=F, results='hide', echo=F}
 
@@ -193,9 +193,11 @@ abline(a = 0, b = 1, col ="red")
 
 ```
 
+<!--quasi variance?-->
+
 ### 4) Equivalence to GLM:
 
-It is interesting to note that the estimates of export scores in Table 5 of Varin et al. are, up to scaling, identical to estimates from a binomial glm with logit link on proportional citation counts. The response is a vector of $\{\frac{c_{ij}}{t_{ij}}\}$ with zeros for diagonal elements. The zero-sum constraint on the export scores described in Section 5.1 of Varin et al. is not implemented so one score is NA. (For details, see the `glm` code chunk in the markdown version of this document.)
+Varin et al. point out in Section 5.1 that export scores can be estimated with standard GLM software. Indeed, the estimates of export scores in Table 5 of Varin et al. are identical to estimates from a quasibinomial generalized linear model (GLM) with logit link on proportional citation counts (differing only by a constant depending on the constraint imposed). The response is a vector of $\{\frac{c_{ij}}{t_{ij}}\}$ with zeros for diagonal elements. As in the Stigler model we must have a reference journal or zero-sum constraint. The model is implemented in the `glm` code chunk in the markdown version of this document.
 
 ```{r glm, eval = T, cache = T, echo = F, results = 'hide', dependson= c("setup", "setup_jrss", "latent_sr1"), fig.keep='none', warning=F}
 
@@ -220,17 +222,22 @@ y = as.vector(t(Cmatrix))/as.vector(Tmatrix)
 y[is.nan(y)]=0
 
 #model
-g1 = glm(y~x1-1,family = binomial(link="logit"), weights = as.vector(Tmatrix))
+g1 = glm(y~x1-1,family = quasibinomial(link="logit"), weights = as.vector(Tmatrix))
 
-#results
-#identical to Stigler up to scaling and loss of 1 DOF:
-cor(fit.table2$quasi, g1$coefficients, use="pairwise.complete.obs") 
-plot(fit.table2$quasi, g1$coefficients, ylab = "glm", xlab = "Stigler")
+# Results Identical to Sigler
 
-#variance? 
-#Standard errors of the coefficient estimates from the GLM g1 are almost perfectly correlated with the quasi-standard errors of the Stigler model presented in Section 5.3 of the paper. 
-g1se = (summary(g1))$coefficients[,2]
-cor(g1se, fit.table2$qse[1:46]) #.99
+cor(fit.table2$quasi, g1$coefficients, use="pairwise.complete.obs")
+    # The constraint is not implemented directly so one score is NA
+    # OR, as if we set last coef to 0
+    cor(fit.table2$quasi, c(g1$coefficients[1:46], 0) )
+    
+plot(fit.table2$quasi, g1$coefficients, ylab = "glm", xlab = "Stigler") 
+    #shifted by -.7 = fit.table2$quasi[47]
+
+summary(y-predict(g1)*as.vector(Tmatrix))
+
+# Overdispersion - no need to estimate seperately
+summary(g1)$dispersion
 
 #### 1a. Binomial GLM sender + receiver ####
 
@@ -247,7 +254,7 @@ for (i in 1:n) { #sender
   }
 }
 
-g1a = glm(y~x1a-1,family = binomial(link="logit"), weights = as.vector(Tmatrix))
+g1a = glm(y~x1a-1,family = quasibinomial(link="logit"), weights = as.vector(Tmatrix))
 
 #identical to Stigler up to scaling and loss of 1 DOF (last value NA) :
 cor(fit.table2$quasi, g1a$coefficients[1:47]-g1a$coefficients[48:94], use="pairwise.complete.obs") #=1
@@ -255,11 +262,7 @@ cor(fit.table2$quasi, g1a$coefficients[1:47]-g1a$coefficients[48:94], use="pairw
 #"receiver" and "sender" coefficents perfectly negatively correlated.
 cor(g1a$coefficients[1:47], g1a$coefficients[48:94], use = "complete.obs")
 
-#variance correlates almost perfectly to QSE
-g1ase = (summary(g1a))$coefficients[,2]
-cor(g1ase[48:93], fit.table2$qse[1:46])
-
-#### 2. Poisson GLM ####
+#### 2. Poisson GLM (compare to latent.srp1) ####
 
 #response
 y2 = as.vector(Cmatrix)
@@ -267,8 +270,22 @@ y2 = as.vector(Cmatrix)
 #model
 g2 = glm.fit(x1a, y2, family = poisson(link="log"))
 
+# MKL fit estimates almost equivalent to (shifted) latent.srp1 estiamtes
+# Are the underlying models the same, just one fit with mcmc?
+# '"glm.fit" uses iteratively reweighted least squares (IWLS)' (always same output)
+# ergmm uses mcmc (output differs slightly each time)
+
+plot(latent.srp1$mkl$beta[48:94] - latent.srp1$mkl$beta[1:47],
+     g2$coefficients[48:94] - g2$coefficients[1:47])
+cor(latent.srp1$mkl$beta[48:94] - latent.srp1$mkl$beta[1:47],
+    g2$coefficients[48:94] - g2$coefficients[1:47], use="complete.obs") #.999
+#lm(latent.srp1$mkl$beta[48:94] ~g2$coefficients[48:94]) #latent is g2 -.18
+#lm(latent.srp1$mkl$beta[1:47] ~g2$coefficients[1:47]) #latent is g2 +.18
+latent.srp1$mkl$beta[26] - latent.srp1$mkl$beta[26+47]
+g2$coefficients[26] - g2$coefficients[26+47]
 #Poisson GLM also close to Stigler:
-cor(fit.table2$quasi, g2 $coefficients[48:94] - g2$coefficients[1:47] , use="complete.obs")
+cor(fit.table2$quasi, g2 $coefficients[48:94] - g2$coefficients[1:47] , 
+    use="complete.obs")
 plot(fit.table2$quasi, g2$coefficients[48:94] - g2$coefficients[1:47])
 
 #### end ####
@@ -676,67 +693,11 @@ summary.statistics(Cnet~triadcensus())
 
 $\pagebreak$
 
-
 <!--Notes:-->
 
-<!--test for significant difference between two scores for this model? still use quasi variance?-->
-
-<!-- Connect to PAGE RANK? "node ranking of graphs" and "node ranking problem". citation <-> hyperlink. Page rank considers secondary important = citations by important journals.https://www.cs.umd.edu/class/spring2008/cmsc828g/Slides/node-ranking.pdf" --> 
-
-```{r page_rank, eval = F, results = 'hide', echo = F}
-#"Page rank is the best-known technique for link-based importance ranking"
-#https://www.cs.umd.edu/class/spring2008/cmsc828g/Slides/node-ranking.pdf
-#page rank to citation net articles:
-#http://arxiv.org/pdf/0901.2640.pdf <- prob most useful, good summary
-#http://arxiv.org/pdf/1012.4872.pdf (damping factor)
-#http://onlinelibrary.wiley.com/doi/10.1002/asi.21452/epdf (weighted page rank)
-library(igraph)
-Cgraph = graph.adjacency(Cmatrix, weighted=T)
-Cgraph.page.rank = page.rank(Cgraph)$vector 
-##"If weights arg is NULL and the graph has a weight edge attribute then that is used."
-round(100*Cgraph.page.rank,2)
-plot(Cnet, vertex.cex = 50*Cgraph.page.rank, edge.col = 0, label=Cnet%v%"vertex.names", label.cex=.7)
-#not working well bc not normalized?
-Cgraph.norm = graph.adjacency(Cmatrix.norm, weighted=T)
-Cgraph.page.rank.norm = page.rank(Cgraph.norm)$vector 
-plot(Cgraph.page.rank, Cgraph.page.rank.norm)
-cor(Cgraph.page.rank, Cgraph.page.rank.norm) #.37
-plot(Cnet, vertex.cex = 50*Cgraph.page.rank.norm, edge.col = 0, label=Cnet%v%"vertex.names", label.cex=.7)
-par(mfrow = c(1,1))
-#eigenfactor method normalizes
-#for the stigler: "Nas.network(Cmatrix, directed=T, matrix.type="a", ignore.eval=F,  names.eval="citations")normalization for journal size, which is explicit in the definitions of various impact factor and article influence measures, is thus implicit for the Stigler model."
-plot(Cgraph.page.rank, cite.ratio) #no corellation
-
-#topic-sensitive page rank the equivalent of subclassing the journals?
-
-#### ####
-```
+<!--test for significant difference between two scores for this model? -->
 
 <!--Modelling with structural elements? better than a triad census? We can include structural features in a network model. We can add `transitive` and `intransitive` terms to a model on the thinned down citation network. These tally the transitive and intransitive triads respectively (see @ergm). We use the thinned network because the transitivity terms do not reflect the edge weights (citation counts) in their calculations. The estimated coefficients are very small.-->
-
-```{r ergm.cyclic, dependson = c("setup", "network_thin"), eval=F, cache=T, echo=F, warning=F, message=F, results = 'hide'}
-
-library(ergm)
-#use thinned network because it's the binary version:
-#ergm.cyclic1 = ergm(Cnet.strong~triadcensus())
-#ergm.cyclic2 = ergm(Cnet.strong~ triadcensus(c(4,5,7,8)))   #example that worked
-#ergmm.cyclic2b = ergm(Cnet.strong~ triadcensus(c(1,2,3,4,7,8,10,11,12,13,15,16)) ) #taking larger coefficients of ergm.cyclic1. No Std. Error. adjust fit parameters?
-ergmm.cyclic1 = ergmm(Cnet.strong ~ euclidean(d = 2) + transitive() + intransitive())
-ergmm.cyclic2 = ergmm(Cnet.strong ~ euclidean(d = 2) + sender(base = 0) + receiver(base = 0) - 1 + transitive() + intransitive())
-
-#summary.statistics(Cnet ~ transitive() + intransitive())
-#summary.statistics(Cnet.strong ~ transitive() + intransitive())
-#mcmc.diagnostics.ergmm(ergm.cyclic2)
-
-```
-
-<!--Model with valued net package. For description of the statistics used in this model see [@krivitsky2012].-->
-```{r ergmm.cyclic, dependson = "setup", eval=F, cache=T, echo=F, results='hide', warning=FALSE}
-  
-structure1 = ergm(Cnet ~ transitiveweights(twopath="min", combine="sum", affect="geomean") + 
-  cyclicalweights(twopath="min", combine="sum", affect="geomean"), 
-  response ="citations", reference =~Poisson)
-```
 
 #  References
 
